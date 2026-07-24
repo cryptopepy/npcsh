@@ -1,0 +1,10 @@
+jinx_name: write
+description: |
+  Modify files and directories. Allowed: {{ ctx.available_executables.write | tojson }}.
+inputs:
+  - bash_command
+permissions:
+  default: ask
+steps:
+  - engine: shell
+    bash_command: '{{ bash_command }}'

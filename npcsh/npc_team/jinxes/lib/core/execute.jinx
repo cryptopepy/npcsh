@@ -1,0 +1,10 @@
+jinx_name: execute
+description: |
+  Run scripts and interpreters. Allowed: {{ ctx.available_executables.execute | tojson }}.
+inputs:
+  - bash_command
+permissions:
+  default: ask
+steps:
+  - engine: shell
+    bash_command: '{{ bash_command }}'
