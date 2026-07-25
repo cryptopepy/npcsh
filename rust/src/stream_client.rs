@@ -289,8 +289,9 @@ fn apply_sse_event(
                 } else {
                     String::new()
                 };
-                let preview = if display.len() > 500 {
-                    format!("{}...\n[{} chars total]", &display[..500], display.len())
+                let preview = if display.chars().count() > 500 {
+                    let truncated: String = display.chars().take(500).collect();
+                    format!("{}...\n[{} chars total]", truncated, display.chars().count())
                 } else {
                     display.clone()
                 };

@@ -1,0 +1,10 @@
+jinx_name: read
+description: |
+  Read files and directories. Allowed: {{ ctx.available_executables.read | tojson }}.
+inputs:
+  - bash_command
+permissions:
+  default: allow
+steps:
+  - engine: shell
+    bash_command: '{{ bash_command }}'

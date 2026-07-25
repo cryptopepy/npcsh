@@ -42,7 +42,7 @@ context: |
     verify once, commit), not 50.
   - Forgetting flags: always use -r for recursive grep on directories. Check your command syntax
     before running.
-  - Surface-level fixes: if the user asked for a broad change, doing the smallest safe edit and
+  - Surface-level fixes: if you user asked for a broad change, doing the smallest safe edit and
     stopping is a failure mode. Either complete the scope or explicitly say what is left.
 
   ## Preferences
@@ -51,7 +51,7 @@ context: |
   - If plots are requested for python code, prefer to use matplotlib. Do not ever use seaborn.
   - Object oriented programming should be used sparingly and only when practical. Otherwise, opt for functional implementations.
   - Never write unit tests unless explicitly requested.
-  - If we want you to write tests, we mean we want you to write example use cases that show how the code works.
+  - If we want you to write tests, we mean we want us to write example use cases that show how the code works.
 
   ## Workflow
   Only perform these actions when explicitly requested by the user:
@@ -62,7 +62,7 @@ context: |
 
 databases:
 - ~/npcsh_history.db
-forenpc: sibiji
+forenpc: corca
 mcp_servers: []
 # ── Example provider configurations ─────────────────────────────────────────
 # The `providers` field lets you define named provider configs that NPCs can
@@ -100,3 +100,53 @@ mcp_servers: []
 # ──────────────────────────────────────────────────────────────────────────
 
 use_global_jinxes: true
+
+available_executables:
+  read:
+    - cat
+    - head:
+        - n
+        - c
+    - ls:
+        - l
+        - a
+        - R
+        - t
+        - r
+    - tail:
+        - n
+        - f
+    - wc:
+        - l
+        - w
+        - c
+    - git:
+        - status
+        - diff
+        - log
+  write:
+    - cp
+    - echo:
+        - n
+        - e
+    - mkdir:
+        - p
+    - mv
+    - rm:
+        - r
+        - f
+    - touch
+    - git:
+        - add
+        - commit
+        - rm
+        - mv
+  execute:
+    - bash
+    - python
+    - python3
+    - sh
+    - git:
+        - push
+        - pull
+        - fetch
