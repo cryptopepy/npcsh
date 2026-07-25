@@ -52,10 +52,28 @@ DB_PATH = _history_db_path()
 
 
 def _find_npcsh_bin() -> str:
-    """Verify `npcsh` exists on PATH and return the resolved executable name."""
-    if shutil.which("npcsh"):
-        return "npcsh"
+    """Verify `npcsh` exists on PATH and return the resolved absolute path."""
+    if _NPCSH_BIN and os.path.exists(_NPCSH_BIN):
+        return _NPCSH_BIN
     raise FileNotFoundError("npcsh binary not found on PATH; build and install it first")
+
+
+# Resolve executables once at import time so the runner stays functional even if
+# a misbehaving model corrupts the in-process PATH during a long benchmark.
+_BASH_BIN = shutil.which("bash") or "/bin/bash"
+_SCRIPT_BIN = shutil.which("script") or "/usr/bin/script"
+_NPCSH_BIN = shutil.which("npcsh") or "/usr/local/bin/npcsh"
+_PKILL_BIN = shutil.which("pkill") or "/usr/bin/pkill"
+
+
+def _ensure_sane_path(env: dict) -> dict:
+    """Guarantee the subprocess env has a usable PATH even if os.environ lost it."""
+    fallback_path = "/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
+    path = env.get("PATH", "")
+    if not path:
+        env["PATH"] = fallback_path
+        print(f"  [warn] PATH was empty in runner; restored fallback PATH", flush=True)
+    return env
 
 
 @dataclass
@@ -283,7 +301,7 @@ def _kill_descendants(root_pid: int) -> None:
         psutil.wait_procs(descendants, timeout=3)
     except ImportError:
         try:
-            subprocess.run(["pkill", "-9", "-P", str(root_pid)],
+            subprocess.run([_PKILL_BIN, "-9", "-P", str(root_pid)],
                            capture_output=True, timeout=5)
         except Exception:
             pass
@@ -302,13 +320,13 @@ def _run_npcsh_attempt(
     Returns (stdout_text, conversation_id) so the caller can retrieve the
     full conversation history from npcsh_history.db.
     """
-    env = os.environ.copy()
+    env = _ensure_sane_path(os.environ.copy())
     # Ensure the Rust npcsh binary in ~/.npcsh/bin wins over any Python shim.
     bin_dir = os.path.expanduser("~/.npcsh/bin")
     # In a container the binary is installed system-wide; don't force the local
     # ~/.npcsh/bin path if it doesn't exist and npcsh is already on PATH.
-    if not os.path.isdir(bin_dir) and shutil.which("npcsh"):
-        bin_dir = os.path.dirname(shutil.which("npcsh"))
+    if not os.path.isdir(bin_dir) and os.path.exists(_NPCSH_BIN):
+        bin_dir = os.path.dirname(_NPCSH_BIN)
     env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
     env["NPCSH_CHAT_MODEL"] = model
     env["NPCSH_CHAT_PROVIDER"] = provider
@@ -370,14 +388,14 @@ def _run_npcsh_attempt(
         # non-interactive environment (CI, Docker), run it through `script` to
         # allocate a pseudo-terminal.  This mirrors a normal shell session
         # without touching the host's actual terminal or shell configuration.
-        if shutil.which("script"):
+        if os.path.exists(_SCRIPT_BIN):
             cmd = [
-                "script", "-qec",
-                f"npcsh -c {shlex.quote(instruction)}",
+                _SCRIPT_BIN, "-qec",
+                f"{_NPCSH_BIN} -c {shlex.quote(instruction)}",
                 "/dev/null",
             ]
         else:
-            cmd = ["npcsh", "-c", instruction]
+            cmd = [_NPCSH_BIN, "-c", instruction]
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -387,9 +405,9 @@ def _run_npcsh_attempt(
             cwd=work_dir,
             start_new_session=True,
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         shutil.rmtree(tmp_home, ignore_errors=True)
-        return "Exception: npcsh binary not found on PATH", conversation_id
+        return f"Exception: {exc}", conversation_id
 
     def _drain_stdout():
         try:
@@ -619,7 +637,7 @@ def run_task(task: dict,
                 break
             try:
                 subprocess.run(
-                    ["bash", "-c", setup_cmd],
+                    [_BASH_BIN, "-c", setup_cmd],
                     timeout=min(remaining, 15), capture_output=True, text=True,
                     cwd=task_dir,
                 )
@@ -682,7 +700,7 @@ Try a different approach. Do not search the web about this."""
 
         try:
             verify = subprocess.run(
-                ["bash", "-c", verify_cmd],
+                [_BASH_BIN, "-c", verify_cmd],
                 capture_output=True, text=True,
                 timeout=min(remaining, verify_timeout),
                 cwd=task_dir,
