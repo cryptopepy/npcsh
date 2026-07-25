@@ -363,7 +363,7 @@ async fn run_jinx_command(kernel: &mut Kernel, current_pid: u32, cmd_name: &str,
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 enum Mode {
     Agent,
     Chat,
@@ -997,6 +997,7 @@ async fn main() -> Result<()> {
             match readline_raw(
                 &prompt,
                 &mut history,
+                mode.clone(),
                 &mut history_index,
                 &helper,
                 &mut kernel,
@@ -1005,6 +1006,11 @@ async fn main() -> Result<()> {
                 Ok(ReadlineResult::Input(line)) => {
                     history.push(line.clone());
                     history_index = None;
+                    let _ = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&history_path)
+                        .and_then(|mut f| writeln!(f, "{}", line));
                     line
                 }
                 Ok(ReadlineResult::Cancel) => continue,
@@ -3386,6 +3392,46 @@ fn is_bash_command(input: &str) -> bool {
     false
 }
 
+/// Fast, cache-backed bash detection used only for live input coloring.
+fn looks_like_bash(input: &str) -> bool {
+    let cmd = input.split_whitespace().next().unwrap_or("");
+    if cmd.is_empty() {
+        return false;
+    }
+    if SHELL_BUILTINS.contains(&cmd) {
+        return true;
+    }
+    if cmd.contains('/') {
+        return std::path::Path::new(cmd).is_file();
+    }
+    cached_path_lookup(cmd)
+}
+
+static PATH_CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, bool>>> =
+    std::sync::OnceLock::new();
+
+fn cached_path_lookup(cmd: &str) -> bool {
+    if cmd.is_empty() || cmd.contains('/') {
+        return false;
+    }
+    let cache = PATH_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    {
+        let read = cache.lock().unwrap();
+        if let Some(hit) = read.get(cmd) {
+            return *hit;
+        }
+    }
+    let found = std::env::var("PATH")
+        .ok()
+        .map(|path| {
+            path.split(':')
+                .any(|dir| std::path::Path::new(dir).join(cmd).is_file())
+        })
+        .unwrap_or(false);
+    cache.lock().unwrap().insert(cmd.to_string(), found);
+    found
+}
+
 fn is_terminal_editor(input: &str) -> bool {
     let cmd = input.split_whitespace().next().unwrap_or("");
     TERMINAL_EDITORS.contains(&cmd)
@@ -4005,6 +4051,102 @@ async fn exec_nsh_file(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum TokenClass {
+    CoreCommand,
+    NpcRef,
+    BashCommand,
+    UnknownSlash,
+    Text,
+}
+
+fn classify_input(buf: &str) -> TokenClass {
+    let first = buf.split_whitespace().next().unwrap_or("");
+    if first.is_empty() {
+        return TokenClass::Text;
+    }
+    if first.starts_with('/') {
+        if CORE_COMMANDS.iter().any(|c| c.name == first) {
+            TokenClass::CoreCommand
+        } else {
+            TokenClass::UnknownSlash
+        }
+    } else if first.starts_with('@') {
+        TokenClass::NpcRef
+    } else if looks_like_bash(buf) {
+        TokenClass::BashCommand
+    } else {
+        TokenClass::Text
+    }
+}
+
+fn color_for_class(class: TokenClass) -> &'static str {
+    match class {
+        TokenClass::CoreCommand => CYAN,
+        TokenClass::NpcRef => PURPLE,
+        TokenClass::BashCommand => YELLOW,
+        TokenClass::UnknownSlash => RED,
+        TokenClass::Text => "",
+    }
+}
+
+fn colorize_input(buf: &str) -> String {
+    let class = classify_input(buf);
+    let color = color_for_class(class);
+    if color.is_empty() {
+        return buf.to_string();
+    }
+    let first = buf.split_whitespace().next().unwrap_or("");
+    if first.is_empty() {
+        return buf.to_string();
+    }
+    let start = buf
+        .find(|c: char| !c.is_whitespace())
+        .unwrap_or(0);
+    let end = start + first.len();
+    format!(
+        "{}{}{}[0m{}",
+        &buf[..start],
+        color,
+        first,
+        &buf[end..]
+    )
+}
+
+fn input_hint(buf: &str, mode: Mode) -> Option<String> {
+    if buf.trim().is_empty() {
+        return None;
+    }
+    match classify_input(buf) {
+        TokenClass::BashCommand if mode == Mode::Agent => {
+            let first = buf.split_whitespace().next().unwrap_or("");
+            if first == "cd" || is_terminal_editor(buf) || is_interactive(buf) {
+                return None;
+            }
+            Some("will execute as bash".to_string())
+        }
+        TokenClass::UnknownSlash => Some("unknown command".to_string()),
+        _ => None,
+    }
+}
+
+fn visible_len(s: &str) -> usize {
+    let mut count = 0;
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{001b}' {
+            while let Some(next) = chars.next() {
+                if next.is_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            count += 1;
+        }
+    }
+    count
+}
+
 enum ReadlineResult {
     Input(String),
     Cancel,
@@ -4014,6 +4156,7 @@ enum ReadlineResult {
 fn readline_raw(
     prompt: &str,
     history: &mut Vec<String>,
+    mode: Mode,
     history_index: &mut Option<usize>,
     helper: &NpcHelper,
     kernel: &mut Kernel,
@@ -4044,7 +4187,7 @@ fn readline_raw(
                     let text = text.replace('\r', "\n");
                     buf.insert_str(pos, &text);
                     pos += text.len();
-                    redraw_prompt(prompt, &buf, pos);
+                    redraw_prompt(prompt, &buf, pos, mode);
                     io::stdout().flush()?;
                     continue;
                 }
@@ -4079,7 +4222,7 @@ fn readline_raw(
                                             println!("{DIM}(no thinking content available){RESET}");
                                         }
                                     }
-                                    redraw_prompt(prompt, &buf, pos);
+                                    redraw_prompt(prompt, &buf, pos, mode);
                                 }
                                 'o' => {
                                     print!("\r\n");
@@ -4122,7 +4265,7 @@ fn readline_raw(
                                             println!("{BOLD}═{RESET}");
                                         }
                                     }
-                                    redraw_prompt(prompt, &buf, pos);
+                                    redraw_prompt(prompt, &buf, pos, mode);
                                 }
                                 _ => {}
                             }
@@ -4130,13 +4273,11 @@ fn readline_raw(
                             tab_matches.clear();
                             if pos == buf.len() {
                                 buf.push(c);
-                                print!("{}", c);
-                                pos += 1;
                             } else {
                                 buf.insert(pos, c);
-                                pos += 1;
-                                redraw_prompt(prompt, &buf, pos);
                             }
+                            pos += 1;
+                            redraw_prompt(prompt, &buf, pos, mode);
                             io::stdout().flush()?;
                         }
                     }
@@ -4145,11 +4286,7 @@ fn readline_raw(
                         if pos > 0 {
                             buf.remove(pos - 1);
                             pos -= 1;
-                            if pos == buf.len() {
-                                print!("\x08 \x08");
-                            } else {
-                                redraw_prompt(prompt, &buf, pos);
-                            }
+                            redraw_prompt(prompt, &buf, pos, mode);
                             io::stdout().flush()?;
                         }
                     }
@@ -4157,7 +4294,7 @@ fn readline_raw(
                         tab_matches.clear();
                         if pos < buf.len() {
                             buf.remove(pos);
-                            redraw_prompt(prompt, &buf, pos);
+                            redraw_prompt(prompt, &buf, pos, mode);
                             io::stdout().flush()?;
                         }
                     }
@@ -4200,14 +4337,14 @@ fn readline_raw(
                                 *history_index = Some(new_idx);
                                 buf = history[new_idx].clone();
                                 pos = buf.len();
-                                redraw_prompt(prompt, &buf, pos);
+                                redraw_prompt(prompt, &buf, pos, mode);
                             }
                         } else if !history.is_empty() {
                             let new_idx = history.len() - 1;
                             *history_index = Some(new_idx);
                             buf = history[new_idx].clone();
                             pos = buf.len();
-                            redraw_prompt(prompt, &buf, pos);
+                            redraw_prompt(prompt, &buf, pos, mode);
                         }
                     }
                     KeyCode::Down => {
@@ -4217,12 +4354,12 @@ fn readline_raw(
                                 *history_index = Some(new_idx);
                                 buf = history[new_idx].clone();
                                 pos = buf.len();
-                                redraw_prompt(prompt, &buf, pos);
+                                redraw_prompt(prompt, &buf, pos, mode);
                             } else {
                                 *history_index = None;
                                 buf.clear();
                                 pos = 0;
-                                redraw_prompt(prompt, &buf, pos);
+                                redraw_prompt(prompt, &buf, pos, mode);
                             }
                         }
                     }
@@ -4235,7 +4372,7 @@ fn readline_raw(
                                     format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
                                 pos = word_start + replacement.len();
                                 buf = new_buf;
-                                redraw_prompt(prompt, &buf, pos);
+                                redraw_prompt(prompt, &buf, pos, mode);
                                 tab_matches.clear();
                             } else if !matches.is_empty() {
                                 tab_matches = matches;
@@ -4257,7 +4394,7 @@ fn readline_raw(
                                     print!("{:<width$}", m.display, width = col_width);
                                 }
                                 print!("\r\n");
-                                redraw_prompt(prompt, &buf, pos);
+                                redraw_prompt(prompt, &buf, pos, mode);
                             }
                         } else {
                             if !tab_matches.is_empty() {
@@ -4268,7 +4405,7 @@ fn readline_raw(
                                     format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
                                 pos = word_start + replacement.len();
                                 buf = new_buf;
-                                redraw_prompt(prompt, &buf, pos);
+                                redraw_prompt(prompt, &buf, pos, mode);
                             }
                         }
                     }
@@ -4287,17 +4424,103 @@ fn readline_raw(
     result
 }
 
-fn redraw_prompt(prompt: &str, buf: &str, pos: usize) {
+fn redraw_prompt(prompt: &str, buf: &str, pos: usize, mode: Mode) {
+    let colored = colorize_input(buf);
+    let hint = input_hint(buf, mode);
+
     let prompt_lines = prompt.chars().filter(|c| *c == '\n').count() + 1;
 
     print!("\x1b[2K\x1b[G");
     for _ in 1..prompt_lines {
         print!("\x1b[A\x1b[2K\x1b[G");
     }
+    print!("\x1b[J");
+
     print!("{}", prompt);
-    print!("{}", buf);
-    if pos < buf.len() {
-        print!("{}", "\x1b[D".repeat(buf.len() - pos));
+    print!("{}", colored);
+
+    let after_visible = visible_len(&buf[pos..]);
+    if after_visible > 0 {
+        print!("\x1b[{}D", after_visible);
     }
+
+    if let Some(h) = hint {
+        let target_col = visible_len(prompt) + visible_len(&buf[..pos]);
+        print!("\r\n\x1b[2K\x1b[90m{}\x1b[0m", h);
+        print!("\x1b[1A\x1b[G\x1b[{}C", target_col);
+    }
+
     let _ = io::stdout().flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn visible_len_strips_ansi() {
+        assert_eq!(visible_len("\x1b[31mhello\x1b[0m"), 5);
+        assert_eq!(visible_len("\x1b[1;36m/\x1b[0mhelp"), 5);
+    }
+
+    #[test]
+    fn classify_known_core_command() {
+        assert_eq!(classify_input("/help"), TokenClass::CoreCommand);
+        assert_eq!(classify_input("/exit now"), TokenClass::CoreCommand);
+    }
+
+    #[test]
+    fn classify_npc_ref() {
+        assert_eq!(classify_input("@alice"), TokenClass::NpcRef);
+        assert_eq!(classify_input("@bob hi"), TokenClass::NpcRef);
+    }
+
+    #[test]
+    fn classify_unknown_slash() {
+        assert_eq!(classify_input("/foobar"), TokenClass::UnknownSlash);
+    }
+
+    #[test]
+    fn colorize_core_command_wraps_first_token() {
+        let out = colorize_input("/help foo");
+        assert!(out.starts_with(CYAN));
+        assert!(out.contains("/help"));
+        assert!(out.ends_with(" foo"));
+
+        let with_space = colorize_input("  /help");
+        assert!(with_space.starts_with("  "));
+        assert!(with_space.contains("/help"));
+    }
+
+    #[test]
+    fn colorize_bash_command_first_token() {
+        let out = colorize_input("ls -la");
+        assert!(out.starts_with(YELLOW));
+        assert!(out.contains("ls"));
+        assert!(out.contains("\u{001b}[0m -la"));
+    }
+
+    #[test]
+    fn colorize_text_untouched() {
+        assert_eq!(colorize_input("hello world"), "hello world");
+    }
+
+    #[test]
+    fn input_hint_for_bash_in_agent_mode() {
+        assert_eq!(
+            input_hint("ls -la", Mode::Agent),
+            Some("will execute as bash".to_string())
+        );
+    }
+
+    #[test]
+    fn input_hint_no_hint_for_cd_or_editors() {
+        assert_eq!(input_hint("cd /tmp", Mode::Agent), None);
+        assert_eq!(input_hint("vim file.txt", Mode::Agent), None);
+    }
+
+    #[test]
+    fn input_hint_no_hint_in_chat_mode() {
+        assert_eq!(input_hint("ls -la", Mode::Chat), None);
+    }
 }

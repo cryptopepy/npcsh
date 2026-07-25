@@ -23,7 +23,8 @@ jinxes:
 {% endfor %}
   - {{ Jinx('screenshot') }}
   - {{ Jinx('wait') }}
-  - {{ Jinx('shell') }}
-  - {{ Jinx('py') }}
+  - {{ Jinx('read') }}
+  - {{ Jinx('write') }}
+  - {{ Jinx('execute') }}
   - {{ Jinx('chat') }}
   - {{ Jinx('stop') }}
