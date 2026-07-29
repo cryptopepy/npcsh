@@ -36,8 +36,7 @@ async fn ensure_server_running(client: &reqwest::Client, server_url: &str) -> st
         return Ok(());
     }
 
-    let python = std::env::var("BACKEND_PYTHON_PATH")
-        .or_else(|_| std::env::var("PYTHON_PATH"))
+    let python = std::env::var("NPCSH_BACKEND_PYTHON")
         .unwrap_or_else(|_| "python3".to_string());
 
     let teams_yaml = std::env::var("NPCSH_TEAM_YAML")
