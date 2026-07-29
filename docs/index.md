@@ -9,17 +9,7 @@
 
 ## The Team
 
-The bundled team ships with one default agent and several specialists. The default agent is `corca`, who acts as both the coding/shell specialist and the team orchestrator.
-
-| Agent | Role | Key jinxes |
-|-------|------|------------|
-| `corca` | Orchestrator, coding, shell, files | `read`, `write`, `execute`, `explore`, `delegate`, `convene`, `python`, `shell`, `web_search`, `chat`, `stop` |
-| `alicanto` | Deep research, papers, literature review | `python`, `shell`, `load_file` |
-| `frederic` | Creative/math, unconventional solutions | `python`, `vixynt`, `roll`, `sample` |
-| `kadiefa` | Exploratory thinking, unexpected connections | `python`, `shell`, `web_search` |
-| `plonk` | Browser/GUI automation, screenshots | `computer_use`, `screenshot`, `browser_action` |
-
-Switch to an agent inside the shell with `/<agent>` or ask a one-off with `@<agent>`:
+The bundled team ships with one default agent and several specialists. The default agent is `corca`, who acts as both the coding/shell specialist and the team orchestrator. Switch to an agent inside the shell with `/<agent>` or ask a one-off with `@<agent>`:
 
 ```bash
 npcsh> @corca refactor the auth module and add tests
