@@ -49,20 +49,19 @@ export NPCSH_CHAT_MODEL=qwen3.5:2b
 export NPCSH_CHAT_PROVIDER=ollama
 ```
 
-### Model recommendations by available VRAM
+### Model recommendations
 
-These are rough Ollama q4-equivalent fits. Actual usage depends on context length, quantization, and whether the model is MoE/dense. If you do not have a local GPU, use a hosted provider for the best scores.
+These are Ollama q4_K_M estimates; context length and overhead will push actual usage higher. See [Will It Run AI — Qwen 3.5](https://willitrunai.com/blog/qwen-35-vram-requirements-complete-guide), [Gemma 4](https://willitrunai.com/blog/gemma-4-gpu-requirements), and [Granite 4.1](https://willitrunai.com/blog/granite-4-1-vram-requirements) for details.
 
-| Available VRAM | Try this first | Score | Notes |
-|------------------|----------------|-------|-------|
-| CPU / no GPU, or < 4 GB | `qwen3.5:2b` | 66/100 | Fast enough for basic tasks; `0.8b` works but scores 23/100 |
-| 8 GB | `qwen3.5:4b` | 85/100 | Sweet spot for small GPUs; `granite4.1:3b` is an alternative at 68/100 |
-| 12 GB | `qwen3.5:9b` | 95/100 | Strong performance without needing a large card |
-| 16 GB | `gemma4:26b` | 96/100 | Tight fit at 16 GB; `qwen3.5:9b` is the safer fallback |
-| 24 GB | `qwen3.5:35b` | 97/100 | Dense 35B model; also fits `granite4.1:30b` (94/100) or `gemma4:31b` (92/100) |
-| 32 GB+ | `qwen3.5:397b` | 96/100 | Largest tested MoE; only if your setup can load it |
+| Available VRAM | Good fit | Score |
+|----------------|----------|-------|
+| 4–6 GB | `qwen3.5:2b` (~2.7 GB) | 66/100 |
+| 8 GB | `qwen3.5:4b` (~3.4 GB) or `gemma4:e4b` (~3–5 GB) | 85/100 or 96/100 |
+| 12 GB | `qwen3.5:9b` (~6.6 GB) or `granite4.1:8b` (~5 GB) | 95/100 or 81/100 |
+| 16 GB | `gemma4:26b` (~15 GB) | 96/100 |
+| 24 GB | `qwen3.5:35b` (~22 GB) or `granite4.1:30b` (~18 GB) | 97/100 or 94/100 |
 
-For the best results without worrying about VRAM, use a hosted provider such as OpenRouter, OpenAI, Anthropic, or Gemini.
+For the best results without worrying about VRAM, use a hosted provider such as OpenRouter, OpenAI, Anthropic, Gemini, DeepSeek, or Minimax.
 
 ### Windows
 
