@@ -36,8 +36,8 @@ This installs the `npcsh` and `npc` binaries via crates.io.
 
 Local options:
 - [Ollama](https://ollama.com) — `ollama pull qwen3.5:2b`
-- [LM Studio](https://lmstudio.ai) — start the local server and use `openai-like` provider
-- [MLX](https://github.com/ml-explore/mlx) / `npcpy` MLX provider — local Apple Silicon models
+- [LM Studio](https://lmstudio.ai) — provider `lmstudio`
+- Apple Silicon MLX models — provider `mlx`
 
 Hosted providers:
 - OpenRouter, OpenAI, Anthropic, Gemini, DeepSeek, Moonshot, Minimax, and others

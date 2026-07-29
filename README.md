@@ -128,9 +128,9 @@ If startup fails with `failed to spawn npcpy.serve` or `npcpy server did not bec
 
 For local models, install one of:
 
-- [Ollama](https://ollama.com) — `ollama pull qwen3.5:2b`
-- [LM Studio](https://lmstudio.ai) — start the local server and use provider `openai-like`
-- [MLX](https://github.com/ml-explore/mlx) — Apple Silicon local models via `npcpy` MLX provider
+- [Ollama](https://ollama.com) — provider `ollama`
+- [LM Studio](https://lmstudio.ai) — provider `lmstudio`
+- MLX (Apple Silicon) — provider `mlx`
 
 See [docs/installation.md](docs/installation.md) for provider setup, API keys, and VRAM recommendations.
 
