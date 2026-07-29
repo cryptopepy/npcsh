@@ -127,14 +127,14 @@ have_npcpy() {
 
 pin_backend_python() {
     touch "$NPCSHRC"
-    if grep -q '^export BACKEND_PYTHON_PATH=' "$NPCSHRC" 2>/dev/null; then
+    if grep -q '^export NPCSH_BACKEND_PYTHON=' "$NPCSHRC" 2>/dev/null; then
         TMP_RC="$(mktemp)"
-        sed "s|^export BACKEND_PYTHON_PATH=.*|export BACKEND_PYTHON_PATH=$1|" "$NPCSHRC" > "$TMP_RC"
+        sed "s|^export NPCSH_BACKEND_PYTHON=.*|export NPCSH_BACKEND_PYTHON=$1|" "$NPCSHRC" > "$TMP_RC"
         mv "$TMP_RC" "$NPCSHRC"
     else
-        printf 'export BACKEND_PYTHON_PATH=%s\n' "$1" >> "$NPCSHRC"
+        printf 'export NPCSH_BACKEND_PYTHON=%s\n' "$1" >> "$NPCSHRC"
     fi
-    echo "  pinned BACKEND_PYTHON_PATH=$1 in ~/.npcshrc"
+    echo "  pinned NPCSH_BACKEND_PYTHON=$1 in ~/.npcshrc"
 }
 
 echo ""
