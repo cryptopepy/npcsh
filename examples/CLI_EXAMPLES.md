@@ -91,10 +91,10 @@ npc sleep --backfill --dream             # Backfill then dream
 npc sleep --ops prune,deepen,abstract    # Specific operations
 
 # Enter isolated chat with attachments and specified models
-npc spool -n alicanto
-npc spool --attachments ./test_data/port5337.png,./test_data/yuan2004.pdf,./test_data/books.csv
-npc spool --provider ollama --model llama3
-npc spool -p deepseek -m deepseek-reasoner
+npc chat -n alicanto
+npc chat --attachments ./test_data/port5337.png,./test_data/yuan2004.pdf,./test_data/books.csv
+npc chat --provider ollama --model llama3
+npc chat -p deepseek -m deepseek-reasoner
 
 # Schedule listeners and daemons
 npc trigger 'watch for new files in Downloads folder and organize them by type' -m gemma3:27b -p ollama
@@ -120,5 +120,5 @@ npc yap --npc assistant --model llama3.2
 # Basic prompting (non-slash commands)
 npc "What is the weather like today?"
 npc "Help me write a Python script to sort a list" --model gpt-4o --provider openai
-npc "Explain quantum computing in simple terms" --npc sibiji
+npc "Explain quantum computing in simple terms" --npc corca
 npc "How do I install Docker on Ubuntu?" --model claude-3-5-sonnet --provider anthropic

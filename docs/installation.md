@@ -30,29 +30,43 @@ This installs the `npcsh` and `npc` binaries via crates.io.
 
 ## System dependencies
 
-### Linux
+### Models
+
+`npcsh` works with any model provider that LiteLLM supports, including local and hosted options.
+
+Local options:
+- [Ollama](https://ollama.com) — `ollama pull qwen3.5:2b`
+- [LM Studio](https://lmstudio.ai) — start the local server and use `openai-like` provider
+- [MLX](https://github.com/ml-explore/mlx) / `npcpy` MLX provider — local Apple Silicon models
+
+Hosted providers:
+- OpenRouter, OpenAI, Anthropic, Gemini, DeepSeek, Moonshot, Minimax, and others
+
+Set the model and provider in `~/.npcshrc` or per-agent:
 
 ```bash
-# Ollama (optional, for local models)
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen3.5:2b
-ollama pull llava:7b
-ollama pull nomic-embed-text
+export NPCSH_CHAT_MODEL=qwen3.5:2b
+export NPCSH_CHAT_PROVIDER=ollama
 ```
 
-### macOS
+### Model recommendations by available VRAM
 
-```bash
-brew install ollama
-brew services start ollama
-ollama pull qwen3.5:2b
-ollama pull llava:7b
-ollama pull nomic-embed-text
-```
+These are rough Ollama q4-equivalent fits. Actual usage depends on context length, quantization, and whether the model is MoE/dense. If you do not have a local GPU, use a hosted provider for the best scores.
+
+| Available VRAM | Try this first | Score | Notes |
+|------------------|----------------|-------|-------|
+| CPU / no GPU, or < 4 GB | `qwen3.5:2b` | 66/100 | Fast enough for basic tasks; `0.8b` works but scores 23/100 |
+| 8 GB | `qwen3.5:4b` | 85/100 | Sweet spot for small GPUs; `granite4.1:3b` is an alternative at 68/100 |
+| 12 GB | `qwen3.5:9b` | 95/100 | Strong performance without needing a large card |
+| 16 GB | `gemma4:26b` | 96/100 | Tight fit at 16 GB; `qwen3.5:9b` is the safer fallback |
+| 24 GB | `qwen3.5:35b` | 97/100 | Dense 35B model; also fits `granite4.1:30b` (94/100) or `gemma4:31b` (92/100) |
+| 32 GB+ | `qwen3.5:397b` | 96/100 | Largest tested MoE; only if your setup can load it |
+
+For the best results without worrying about VRAM, use a hosted provider such as OpenRouter, OpenAI, Anthropic, or Gemini.
 
 ### Windows
 
-Download and install [Ollama](https://ollama.com), then use the install script from PowerShell via WSL or install with cargo.
+WSL is recommended for running `npcsh` on Windows. You can also install the binaries via the install script or cargo inside WSL.
 
 ## Rust build (development / latest)
 

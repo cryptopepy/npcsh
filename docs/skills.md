@@ -157,8 +157,8 @@ primary_directive: |
 model: qwen3.5:2b
 provider: ollama
 jinxes:
-  - lib/core/sh
-  - lib/core/python
+  - lib/core/shell
+  - lib/core/py
   - skills/code-review
   - skills/debugging
 ```
