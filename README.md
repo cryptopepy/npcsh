@@ -104,7 +104,7 @@ cargo install npcsh
 
 > **Note:** this is a temporary requirement. The `npcpy` server will be replaced by a Rust-native runner for the AI parsing once [npcrs](https://github.com/npc-worldwide/npcrs) reaches greater stability.
 
-`npcsh` drives its agent loop through a local `npcpy` server, which it spawns automatically on startup — there is nothing to run manually, but the Python interpreter `npcsh` uses must have `npcpy` importable:
+`npcsh` drives the inference loop through a local `npcpy` server, which it spawns automatically on startup — there is nothing to run manually, but the Python interpreter `npcsh` uses must have `npcpy` importable:
 
 ```bash
 pip install npcpy
@@ -115,7 +115,7 @@ Requires Python 3.10 or newer.
 By default `npcsh` runs `python3 -m npcpy.serve` on `127.0.0.1:5237`. If `npcpy` lives in a non-default Python (a venv, conda env, or pyenv version), point `npcsh` at that interpreter:
 
 ```bash
-export NPCSH_BACKEND_PYTHON=/path/to/python
+export BACKEND_PYTHON_PATH=/path/to/python   # PYTHON_PATH also works
 ```
 
 The server bind address can be changed with `NPCSH_SERVER_HOST` and `NPCSH_SERVER_PORT`.
