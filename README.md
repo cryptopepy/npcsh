@@ -115,7 +115,7 @@ Requires Python 3.10 or newer.
 By default `npcsh` runs `python3 -m npcpy.serve` on `127.0.0.1:5237`. If `npcpy` lives in a non-default Python (a venv, conda env, or pyenv version), point `npcsh` at that interpreter:
 
 ```bash
-export BACKEND_PYTHON_PATH=/path/to/python   # PYTHON_PATH also works
+export NPCSH_BACKEND_PYTHON=/path/to/python
 ```
 
 The server bind address can be changed with `NPCSH_SERVER_HOST` and `NPCSH_SERVER_PORT`.
