@@ -6,7 +6,7 @@
 <h1 align="center">npcsh</h1>
 
 <p align="center">
-  <strong>The agentic shell for building and running AI teams from the command line.</strong>
+  <strong>The composable multi-agent shell for seamless command-line experiences.</strong>
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 
 ---
 
-`npcsh` makes the most of LLMs and agents through an interactive shell. Build teams of agents, schedule them on jobs, engineer context, and design custom Jinja Execution templates (Jinxes) for your agents to invoke for tool-use, prompts, and skills. 
+`npcsh` interprets bash and natural language seamlessly within a single interface, making the most of LLMs and agents through an interactive shell. Engineer context and design custom Jinja Execution templates (Jinxes) for your agents to invoke for tool-use, prompts, and skills. 
 
 Install `npcsh`:
 
