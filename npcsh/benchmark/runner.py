@@ -170,7 +170,7 @@ class BenchmarkRunner:
             n_concurrent: Number of concurrent task executions
             task_ids: Optional list of specific task IDs to run
             n_tasks: Optional limit on number of tasks to run
-            npc_name: Optional NPC name to use (e.g., "sibiji", "corca")
+            npc_name: Optional NPC name to use (e.g., "corca")
             timeout: Per-task timeout in seconds
 
         Returns:

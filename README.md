@@ -1,12 +1,12 @@
 <p align="center">
-  <a href="https://github.com/npc-worldwide/npcsh/blob/main/docs/npcsh.md">
+  <a href="https://github.com/npc-worldwide/npcsh/blob/main/docs/index.md">
   <img src="https://raw.githubusercontent.com/NPC-Worldwide/npcsh/main/npcsh/npcsh.png" alt="npcsh logo" width=600></a>
 </p>
 
 <h1 align="center">npcsh</h1>
 
 <p align="center">
-  <strong>The agentic shell for building and running AI teams from the command line.</strong>
+  <strong>The composable multi-agent shell for seamless command-line experiences.</strong>
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 
 ---
 
-`npcsh` makes the most of LLMs and agents through an interactive shell. Build teams of agents, schedule them on jobs, engineer context, and design custom Jinja Execution templates (Jinxes) for your agents to invoke for tool-use, prompts, and skills. 
+`npcsh` interprets bash and natural language seamlessly within a single interface, making the most of LLMs and agents through an interactive shell. Engineer context and design custom Jinja Execution templates (Jinxes) for your agents to invoke for tool-use, prompts, and skills. 
 
 Install `npcsh`:
 
@@ -53,10 +53,13 @@ The table below shows scores (100 tasks).
 
 <table>
 <tr><th>Family</th><th>Model</th><th>Version</th><th>Score</th></tr>
-<tr><td rowspan="4"><b>Qwen3.5</b></td><td>4b</td><td>v2.1.5</td><td>85/100 (85%)</td></tr>
+<tr><td rowspan="6"><b>Qwen3.5</b></td><td>0.8b</td><td>v2.1.7</td><td>23/100 (23%)</td></tr>
+<tr><td>2b</td><td>v2.1.7</td><td>66/100 (66%)</td></tr>
+<tr><td>4b</td><td>v2.1.5</td><td>85/100 (85%)</td></tr>
 <tr><td>9b</td><td>v2.1.5</td><td>95/100 (95%)</td></tr>
 <tr><td>35b</td><td>v2.1.5</td><td>97/100 (97%)</td></tr>
 <tr><td>397b</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
+<tr><td><b>Qwen3.6</b></td><td>35b</td><td>v2.1.5</td><td>91/100 (91%)</td></tr>
 <tr><td rowspan="2"><b>Ornith</b></td><td>9b</td><td>v2.1.5</td><td>57/100 (57%)</td></tr>
 <tr><td>35b</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
 <tr><td><b>Kimi K2.7-Code</b></td><td>1t (32b active)</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
@@ -73,9 +76,6 @@ The table below shows scores (100 tasks).
 <tr><td rowspan="3"><b>Granite 4.1</b></td><td>3b</td><td>v2.1.7</td><td>68/100 (68%)</td></tr>
 <tr><td>8b</td><td>v2.1.7</td><td>81/100 (81%)</td></tr>
 <tr><td>30b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
-<tr><td><b>Qwen3.6</b></td><td>35b</td><td>v2.1.5</td><td>91/100 (91%)</td></tr>
-<tr><td><b>Nemotron</b></td><td>3-super 120b (12b active)</td><td>v2.1.7</td><td>88/100 (88%)</td></tr>
-<tr><td><b>Laguna XS 2.1</b></td><td>33b (3b active)</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
 </table>
 
 For a more comprehensive view of npcsh's capabilities and the advantages of the NPC Context-Agent-Tool data layer, see [ALARA for Agents: Least-Privilege Context Engineering Through Portable Composable Multi-Agent Teams](https://arxiv.org/abs/2603.20380).
@@ -104,7 +104,7 @@ cargo install npcsh
 
 > **Note:** this is a temporary requirement. The `npcpy` server will be replaced by a Rust-native runner for the AI parsing once [npcrs](https://github.com/npc-worldwide/npcrs) reaches greater stability.
 
-`npcsh` drives its agent loop through a local `npcpy` server, which it spawns automatically on startup — there is nothing to run manually, but the Python interpreter `npcsh` uses must have `npcpy` importable:
+`npcsh` drives the inference loop through a local `npcpy` server, which it spawns automatically on startup — there is nothing to run manually, but the Python interpreter `npcsh` uses must have `npcpy` importable:
 
 ```bash
 pip install npcpy
@@ -122,25 +122,17 @@ The server bind address can be changed with `NPCSH_SERVER_HOST` and `NPCSH_SERVE
 
 If startup fails with `failed to spawn npcpy.serve` or `npcpy server did not become reachable after spawn`, the selected Python does not have `npcpy` installed, or the port is already taken by a stale server process.
 
-### macOS system dependencies
+### System dependencies
 
-```bash
-brew install ollama
-brew services start ollama
-ollama pull qwen3.5:2b
-```
+`npcsh` works with any model provider that LiteLLM supports (Ollama, LM Studio, OpenAI, Anthropic, Gemini, DeepSeek, Minimax, etc.). No single provider is required.
 
-### Linux system dependencies
+For local models, install one of:
 
-```bash
-# Ollama
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen3.5:2b
-```
+- [Ollama](https://ollama.com) — `ollama pull qwen3.5:2b`
+- [LM Studio](https://lmstudio.ai) — start the local server and use provider `openai-like`
+- [MLX](https://github.com/ml-explore/mlx) — Apple Silicon local models via `npcpy` MLX provider
 
-### Windows
-
-Install [Ollama](https://ollama.com), then use the install script from PowerShell via WSL, or install with cargo.
+See [docs/installation.md](docs/installation.md) for provider setup, API keys, and VRAM recommendations.
 
 ### Rust build (development)
 
@@ -232,6 +224,3 @@ Contributions welcome! Submit issues and pull requests on the [GitHub repository
 
 MIT License.
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=npc-worldwide/npcsh&type=Date)](https://star-history.com/#npc-worldwide/npcsh&Date)

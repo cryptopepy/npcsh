@@ -21,6 +21,7 @@ services:
       # is intentionally NOT mounted.
       - ./results/npcsh:/data/npcsh
       - .:/opt/npcsh:ro
+      - ../npcpy:/opt/npcpy:ro
     working_dir: /workspace
     # Keep the container alive only while the benchmark runs.
     stdin_open: false

@@ -508,7 +508,7 @@ def _format_conversation(rows: list) -> str:
 
 
 def _build_external_command(framework: str, instruction: str, model: str,
-                            npc: str = "sibiji") -> tuple:
+                            npc: str = "corca") -> tuple:
     """Build (cmd_list, env_dict) for shelling out to a non-npcsh framework."""
     env = os.environ.copy()
     opencode_bin = os.path.expanduser("~/.opencode/bin")

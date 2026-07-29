@@ -30,29 +30,42 @@ This installs the `npcsh` and `npc` binaries via crates.io.
 
 ## System dependencies
 
-### Linux
+### Models
+
+`npcsh` works with any model provider that LiteLLM supports, including local and hosted options.
+
+Local options:
+- [Ollama](https://ollama.com) — `ollama pull qwen3.5:2b`
+- [LM Studio](https://lmstudio.ai) — start the local server and use `openai-like` provider
+- [MLX](https://github.com/ml-explore/mlx) / `npcpy` MLX provider — local Apple Silicon models
+
+Hosted providers:
+- OpenRouter, OpenAI, Anthropic, Gemini, DeepSeek, Moonshot, Minimax, and others
+
+Set the model and provider in `~/.npcshrc` or per-agent:
 
 ```bash
-# Ollama (optional, for local models)
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen3.5:2b
-ollama pull llava:7b
-ollama pull nomic-embed-text
+export NPCSH_CHAT_MODEL=qwen3.5:2b
+export NPCSH_CHAT_PROVIDER=ollama
 ```
 
-### macOS
+### Model recommendations
 
-```bash
-brew install ollama
-brew services start ollama
-ollama pull qwen3.5:2b
-ollama pull llava:7b
-ollama pull nomic-embed-text
-```
+These are Ollama q4_K_M estimates; context length and overhead will push actual usage higher. See [Will It Run AI — Qwen 3.5](https://willitrunai.com/blog/qwen-35-vram-requirements-complete-guide), [Gemma 4](https://willitrunai.com/blog/gemma-4-gpu-requirements), and [Granite 4.1](https://willitrunai.com/blog/granite-4-1-vram-requirements) for details.
+
+| Available VRAM | Good fit | Score |
+|----------------|----------|-------|
+| 4–6 GB | `qwen3.5:2b` (~2.7 GB) | 66/100 |
+| 8 GB | `qwen3.5:4b` (~3.4 GB) or `gemma4:e4b` (~3–5 GB) | 85/100 or 96/100 |
+| 12 GB | `qwen3.5:9b` (~6.6 GB) or `granite4.1:8b` (~5 GB) | 95/100 or 81/100 |
+| 16 GB | `gemma4:26b` (~15 GB) | 96/100 |
+| 24 GB | `qwen3.5:35b` (~22 GB) or `granite4.1:30b` (~18 GB) | 97/100 or 94/100 |
+
+For the best results without worrying about VRAM, use a hosted provider such as OpenRouter, OpenAI, Anthropic, Gemini, DeepSeek, or Minimax.
 
 ### Windows
 
-Download and install [Ollama](https://ollama.com), then use the install script from PowerShell via WSL or install with cargo.
+WSL is recommended for running `npcsh` on Windows. You can also install the binaries via the install script or cargo inside WSL.
 
 ## Rust build (development / latest)
 

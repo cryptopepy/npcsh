@@ -1,6 +1,6 @@
 # Skills
 
-Skills are jinxes that serve knowledge content instead of executing code. They use the `skill.jinx` sub-jinx (like `python.jinx` or `sh.jinx`) and return sections of instructional methodology on demand.
+Skills are jinxes that serve knowledge content instead of executing code. They use the `skill.jinx` sub-jinx (like `py.jinx` or `shell.jinx`) and return sections of instructional methodology on demand.
 
 Skills are not a separate system. They live in `jinxes/skills/`, load through the same compiler, and end up in `jinxes_dict` alongside every other jinx. Agents get skills through the same `jinxes:` list in `.npc` files — no separate configuration needed.
 
@@ -157,13 +157,13 @@ primary_directive: |
 model: qwen3.5:2b
 provider: ollama
 jinxes:
-  - lib/core/sh
-  - lib/core/python
+  - lib/core/shell
+  - lib/core/py
   - skills/code-review
   - skills/debugging
 ```
 
-The agent sees `code-review` and `debugging` as tools alongside `sh` and `python`. When it encounters a review task, it can call `code-review(section=correctness)` to get methodology, then use `python` or `sh` to inspect the actual code.
+The agent sees `code-review` and `debugging` as tools alongside `shell` and `py`. When it encounters a review task, it can call `code-review(section=correctness)` to get methodology, then use `py` or `shell` to inspect the actual code.
 
 Team-level skills work the same way: any skill in the team's `jinxes/skills/` directory is available to all NPCs on the team, just like any other team jinx.
 

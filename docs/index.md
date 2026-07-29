@@ -5,22 +5,35 @@
 ## Quick Links
 
 - [Installation Guide](installation.md)
-- [Full Guide](guide.md) — agents, jinxes, orchestration, and the CAT data layer
-- [Benchmarks](benchmarks.md) — pass/fail results across agentic-shell tasks
-- [NPC Shell Commands](npcsh.md)
-- [NPC CLI](npc_cli.md)
 - [Skills](skills.md) — knowledge-content jinxes with progressive section disclosure
 
-## Program Guides
+## The Team
 
-- [NPC Shell](npcsh.md)
-- [NPC CLI](npc_cli.md)
-- [Alicanto](alicanto.md)
-- [PTI](pti.md)
-- [Spool](spool.md)
-- [Wander](wander.md)
-- [Yap](yap.md)
-- [TLDR Cheat Sheet](TLDR_Cheat_sheet.md)
+The bundled team ships with one default agent and several specialists. The default agent is `corca`, who acts as both the coding/shell specialist and the team orchestrator. Switch to an agent inside the shell with `/<agent>` or ask a one-off with `@<agent>`:
+
+```bash
+npcsh> @corca refactor the auth module and add tests
+npcsh> @alicanto summarize the last three papers on transformers
+```
+
+## Common Commands
+
+| Command | What it does |
+|---------|--------------|
+| `/agent` | Full agent mode: the NPC can call jinxes, run bash, and use the LLM. |
+| `/chat` | Chat-only mode: LLM responses without tool use. |
+| `/cmd` | Command mode: input is run as bash first; if it fails, fall back to the LLM. |
+| `/<agent>` | Switch the current session to the named agent (e.g., `/corca`). |
+| `@<agent>` | Ask a one-off question to an agent without switching. |
+| `/jinxes` | List the jinxes available to the current team. |
+| `/help` | Show the built-in help. |
+
+The CLI also exposes agents via `npc`:
+
+```bash
+npc ./npc_team/corca.npc "what is the biggest file on my computer?"
+npc chat -n corca
+```
 
 ## The CAT Data Layer
 

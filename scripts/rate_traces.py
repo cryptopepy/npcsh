@@ -62,7 +62,6 @@ DEFAULT_JUDGE_PANEL = [
     ("frederic", "deepseek-v4-pro:cloud"),
     ("kadiefa", "glm-5.2:cloud"),
     ("alicanto", "qwen3.5:cloud"),
-    ("sibiji", "minimax-m3:cloud"),
 ]
 NPC_TEAM_DIR = Path(os.environ.get("NPCSH_NPC_TEAM_DIR", "~/.npcsh/npc_team")).expanduser()
 
