@@ -122,25 +122,17 @@ The server bind address can be changed with `NPCSH_SERVER_HOST` and `NPCSH_SERVE
 
 If startup fails with `failed to spawn npcpy.serve` or `npcpy server did not become reachable after spawn`, the selected Python does not have `npcpy` installed, or the port is already taken by a stale server process.
 
-### macOS system dependencies
+### System dependencies
 
-```bash
-brew install ollama
-brew services start ollama
-ollama pull qwen3.5:2b
-```
+`npcsh` works with any model provider that LiteLLM supports (Ollama, LM Studio, OpenAI, Anthropic, Gemini, DeepSeek, Minimax, etc.). No single provider is required.
 
-### Linux system dependencies
+For local models, install one of:
 
-```bash
-# Ollama
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen3.5:2b
-```
+- [Ollama](https://ollama.com) — `ollama pull qwen3.5:2b`
+- [LM Studio](https://lmstudio.ai) — start the local server and use provider `openai-like`
+- [MLX](https://github.com/ml-explore/mlx) — Apple Silicon local models via `npcpy` MLX provider
 
-### Windows
-
-Install [Ollama](https://ollama.com), then use the install script from PowerShell via WSL, or install with cargo.
+See [docs/installation.md](docs/installation.md) for provider setup, API keys, and VRAM recommendations.
 
 ### Rust build (development)
 
