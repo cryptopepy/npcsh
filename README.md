@@ -224,6 +224,3 @@ Contributions welcome! Submit issues and pull requests on the [GitHub repository
 
 MIT License.
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=npc-worldwide/npcsh&type=Date)](https://star-history.com/#npc-worldwide/npcsh&Date)
