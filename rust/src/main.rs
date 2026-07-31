@@ -1013,6 +1013,16 @@ async fn main() -> Result<()> {
                     line
                 }
                 Ok(ReadlineResult::Cancel) => continue,
+                Ok(ReadlineResult::Reattach) => {
+                    let _ = run_reattach(&mut kernel,
+                        current_pid,
+                        std::env::current_dir()
+                            .ok()
+                            .as_ref()
+                            .map(|p| p.to_str().unwrap_or("."))
+                    );
+                    continue;
+                }
                 Ok(ReadlineResult::Eof) => {
                     println!();
                     break;
@@ -1728,7 +1738,10 @@ async fn run_interactive_stream_turn_once(
                         continue;
                     }
                     match key.code {
-                        KeyCode::Esc | KeyCode::Char('c')
+                        KeyCode::Esc => {
+                            let _ = interrupt_tx.send(());
+                        }
+                        KeyCode::Char('c')
                             if key.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             let _ = interrupt_tx.send(());
@@ -3610,6 +3623,7 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
             Option<i64>,
         )>,
     > = std::cell::RefCell::new(Vec::new());
+    let selected_conversation: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
 
     fn short_model(model: &str) -> &str {
         if model.contains("gpt-4") {
@@ -3842,9 +3856,11 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
                     KeyCode::Char('q') | KeyCode::Char('c')
                         if key.modifiers == crossterm::event::KeyModifiers::CONTROL =>
                     {
+                        selected_conversation.replace(None);
                         break;
                     }
                     KeyCode::Char('q') => {
+                        selected_conversation.replace(None);
                         break;
                     }
                     KeyCode::Char('j') | KeyCode::Down => {
@@ -3893,6 +3909,9 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
                     }
                     KeyCode::Enter => {
                         let cid = convos[selected.get()].0.clone();
+                        let _ = terminal::disable_raw_mode();
+                        let _ = write!(stdout, "\x1b[?1049l\x1b[?25h\x1b[999;1H\r\n");
+                        let _ = stdout.flush();
                         if let Some(p) = kernel.get_process_mut(current_pid) {
                             p.conversation_id = cid.clone();
                             p.messages.clear();
@@ -3917,23 +3936,12 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
                                 };
                                 p.messages.push(msg);
                             }
-                            let _ = terminal::disable_raw_mode();
-                            let _ = write!(stdout, "\x1b[2J\x1b[H\x1b[?1049l\x1b[?25h\r\n");
-                            let _ = stdout.flush();
+                            selected_conversation.replace(Some(cid.clone()));
                             println!(
                                 "{GREEN}Reattached to: {cid} ({} messages loaded)\x1b[0m",
                                 p.messages.len()
                             );
-                            let mut n = 0;
-                            for msg in p
-                                .messages
-                                .iter()
-                                .rev()
-                                .take(10)
-                                .collect::<Vec<_>>()
-                                .into_iter()
-                                .rev()
-                            {
+                            for msg in &p.messages {
                                 let role = msg.role.as_str();
                                 let content = msg.content.as_deref().unwrap_or("");
                                 if role == "user" {
@@ -3943,20 +3951,20 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
                                 } else {
                                     println!("{DIM}[{role}] {content}\x1b[0m");
                                 }
-                                n += 1;
-                            }
-                            if p.messages.len() > n {
-                                println!(
-                                    "{DIM}... and {} older messages\x1b[0m",
-                                    p.messages.len() - n
-                                );
                             }
                             println!();
                         } else {
-                            let _ = terminal::disable_raw_mode();
-                            let _ = write!(stdout, "\x1b[2J\x1b[H\x1b[?1049l\x1b[?25h");
-                            let _ = stdout.flush();
+                            selected_conversation.replace(Some(cid.clone()));
                             println!("{YELLOW}Selected: {cid}\x1b[0m");
+                        }
+                        println!("{DIM}Press any key to continue...\x1b[0m");
+                        let _ = stdout.flush();
+                        loop {
+                            if event::poll(std::time::Duration::from_millis(50)).unwrap_or(false) {
+                                if let Ok(Event::Key(_)) = event::read() {
+                                    break;
+                                }
+                            }
                         }
                         break;
                     }
@@ -3967,7 +3975,11 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
     }
 
     let _ = terminal::disable_raw_mode();
-    let _ = write!(stdout, "\x1b[2J\x1b[H\x1b[?1049l\x1b[?25h");
+    if selected_conversation.borrow().is_none() {
+        let _ = write!(stdout, "\x1b[2J\x1b[H\x1b[?1049l\x1b[?25h");
+    } else {
+        let _ = write!(stdout, "\x1b[?1049l\x1b[?25h");
+    }
     let _ = stdout.flush();
     Ok(())
 }
@@ -4150,6 +4162,7 @@ enum ReadlineResult {
     Input(String),
     Cancel,
     Eof,
+    Reattach,
 }
 
 fn readline_raw(
@@ -4360,6 +4373,8 @@ fn readline_raw(
                                 pos = 0;
                                 redraw_prompt(prompt, &buf, pos, mode);
                             }
+                        } else if buf.is_empty() {
+                            break Ok(ReadlineResult::Reattach);
                         }
                     }
                     KeyCode::Tab => {
