@@ -69,6 +69,234 @@ pub fn find_team_dir() -> String {
     ".".to_string()
 }
 
+/// Return the npcsh home directory, preferring the real OS user home over $HOME.
+pub fn npcsh_home() -> std::path::PathBuf {
+    let home = real_user_home().unwrap_or_else(|| {
+        shellexpand::tilde("~").to_string()
+    });
+    std::path::Path::new(&home).join(".npcsh")
+}
+
+/// Expand a leading `~` to the real OS user home directory.
+pub fn expand_tilde(path: &str) -> std::path::PathBuf {
+    if let Some(rest) = path.strip_prefix("~/") {
+        npcsh_home().join(rest)
+    } else if path == "~" {
+        npcsh_home()
+    } else {
+        std::path::Path::new(path).to_path_buf()
+    }
+}
+
+fn _env_bool(value: &str) -> Option<bool> {
+    match value.trim().to_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" | "enable" => Some(true),
+        "0" | "false" | "no" | "off" | "disable" => Some(false),
+        _ => None,
+    }
+}
+
+/// Whether memory/knowledge context injection is enabled.
+///
+/// Explicit `NPCSH_MEMORY=0/false/no/off` disables it; truthy values enable it;
+/// when unset it defaults to auto (enabled when relevant jinxes + stores exist).
+pub fn memory_context_enabled() -> bool {
+    if let Ok(value) = std::env::var("NPCSH_MEMORY") {
+        if value.is_empty() {
+            return true;
+        }
+        if let Some(b) = _env_bool(&value) {
+            return b;
+        }
+    }
+    true
+}
+
+/// Read registered knowledge store scan roots from `~/.npcsh/kg_registry.yaml`.
+pub fn read_kg_registry() -> Vec<String> {
+    let path = npcsh_home().join("kg_registry.yaml");
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    let value: serde_yaml::Value = match serde_yaml::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    if let Some(stores) = value.get("stores").and_then(|v| v.as_sequence()) {
+        for s in stores {
+            if let Some(p) = s.as_str() {
+                out.push(expand_tilde(p).to_string_lossy().to_string());
+            }
+        }
+    }
+    out
+}
+
+
+/// Recursively scan `root` for directories containing `.knowledge.yaml`.
+pub fn scan_for_knowledge_yamls(root: &str) -> Vec<String> {
+    let root = expand_tilde(root);
+    if !root.is_dir() {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    let skip: std::collections::HashSet<&str> = [
+        ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
+        "target", ".tox", ".pytest_cache",
+    ]
+    .iter()
+    .copied()
+    .collect();
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        let rd = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(_) => continue,
+        };
+        for entry in rd.flatten() {
+            let meta = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if meta.is_dir() && !skip.contains(name_str.as_ref()) && !name_str.starts_with('.') {
+                stack.push(entry.path());
+            } else if meta.is_file() && name_str == ".knowledge.yaml" {
+                let store_dir = entry.path().parent().map(|p| p.to_string_lossy().to_string());
+                if let Some(d) = store_dir {
+                    if !found.contains(&d) {
+                        found.push(d);
+                    }
+                }
+                break;
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Summary of a discovered `.knowledge.yaml` store.
+#[derive(Debug, Clone)]
+pub struct KnowledgeStoreInfo {
+    pub directory: String,
+    pub memory_count: usize,
+    pub knowledge_count: usize,
+    pub concept_count: usize,
+    pub link_count: usize,
+}
+
+impl KnowledgeStoreInfo {
+    fn load(directory: &str) -> Option<Self> {
+        let path = std::path::Path::new(directory).join(".knowledge.yaml");
+        let raw = std::fs::read_to_string(&path).ok()?;
+        let value: serde_yaml::Value = serde_yaml::from_str(&raw).ok()?;
+        let seq_len = |key: &str| {
+            value
+                .get(key)
+                .and_then(|v| v.as_sequence())
+                .map(|s| s.len())
+                .unwrap_or(0)
+        };
+        Some(Self {
+            directory: directory.to_string(),
+            memory_count: seq_len("memories"),
+            knowledge_count: seq_len("knowledge"),
+            concept_count: seq_len("concepts"),
+            link_count: seq_len("links"),
+        })
+    }
+}
+
+/// Discover `.knowledge.yaml` stores from the global registry and cwd scan.
+pub fn discover_knowledge_stores(_team_dir: &str) -> Vec<KnowledgeStoreInfo> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Scan any directory registered in the global kg registry.
+    for c in read_kg_registry() {
+        let p = std::path::Path::new(&c);
+        if p.is_dir() {
+            for found in scan_for_knowledge_yamls(&c) {
+                if !seen.contains(&found) {
+                    seen.insert(found.clone());
+                }
+            }
+        }
+    }
+
+    // Always do a downstream scan of cwd as a fallback.
+    if let Ok(cwd) = std::env::current_dir() {
+        for found in scan_for_knowledge_yamls(&cwd.to_string_lossy()) {
+            if !seen.contains(&found) {
+                seen.insert(found.clone());
+            }
+        }
+    }
+
+    let mut out: Vec<KnowledgeStoreInfo> = seen
+        .into_iter()
+        .filter_map(|d| KnowledgeStoreInfo::load(&d))
+        .collect();
+    out.sort_by(|a, b| a.directory.cmp(&b.directory));
+    out
+}
+
+/// Format a short memory/knowledge prompt appendix when relevant jinxes and stores exist.
+pub fn format_memory_context(
+    stores: &[KnowledgeStoreInfo],
+    has_memory_jinx: bool,
+    has_knowledge_jinx: bool,
+) -> String {
+    if stores.is_empty() || (!has_memory_jinx && !has_knowledge_jinx) {
+        return String::new();
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(String::from(""));
+    lines.push(String::from("## Available memory / knowledge stores"));
+
+    if has_memory_jinx && has_knowledge_jinx {
+        lines.push(String::from(
+            "You have access to `memory` and `knowledge` tools backed by the `.knowledge.yaml` stores below.",
+        ));
+    } else if has_memory_jinx {
+        lines.push(String::from(
+            "You have access to a `memory` tool backed by the `.knowledge.yaml` stores below.",
+        ));
+    } else {
+        lines.push(String::from(
+            "You have access to a `knowledge` tool backed by the `.knowledge.yaml` stores below.",
+        ));
+    }
+
+    lines.push(String::from("Use them only when recalling or recording project facts, links, or context is genuinely useful."));
+    lines.push(String::from(""));
+    lines.push(String::from("Stores:"));
+    for s in stores {
+        lines.push(format!(
+            "- {} ({} memories, {} knowledge, {} concepts, {} links)",
+            s.directory, s.memory_count, s.knowledge_count, s.concept_count, s.link_count
+        ));
+    }
+    lines.push(String::from(""));
+
+    if has_memory_jinx {
+        lines.push(String::from(
+            "`memory` actions: search, regex, read, create, update, delete, context. Default directory is the current working directory.",
+        ));
+    }
+    if has_knowledge_jinx {
+        lines.push(String::from(
+            "`knowledge` actions: search, regex, read, create, update, delete. Default directory is the current working directory.",
+        ));
+    }
+
+    lines.join("\n")
+}
+
 fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {

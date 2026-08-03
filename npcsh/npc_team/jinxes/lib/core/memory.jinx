@@ -1,0 +1,111 @@
+jinx_name: memory
+description: |
+  Create, read, update, delete, or search memories in a `.knowledge.yaml` store.
+  Use this to record and recall facts, decisions, and context the team should keep.
+permissions:
+  default: ask
+inputs:
+  - action: "search"
+  - directory: ""
+  - query: ""
+  - mem_id: ""
+  - content: ""
+  - status: ""
+  - limit: "20"
+steps:
+  - name: crud
+    engine: python
+    code: |
+      import json as _json
+      import os
+      import re
+
+      from npcpy.memory.knowledge_store import KnowledgeStore
+
+      action = (context.get('action') or 'search').strip().lower()
+      directory = context.get('directory', '') or context.get('current_path', '') or os.getcwd()
+      directory = os.path.abspath(os.path.expanduser(directory))
+      query = context.get('query', '')
+      mem_id = context.get('mem_id', '')
+      content = context.get('content', '')
+      status = context.get('status', '') or None
+      limit = int(context.get('limit', 20) or 20)
+
+      if not os.path.isdir(directory):
+          output = f"Error: directory not found: {directory}"
+      else:
+          store = KnowledgeStore(directory)
+
+          if action == 'search':
+              if not query:
+                  output = "Error: query is required for search"
+              else:
+                  results = store.search_memories(query, limit=limit)
+                  output = _json.dumps(results, indent=2, default=str)
+
+          elif action == 'regex':
+              if not query:
+                  output = "Error: query regex is required"
+              else:
+                  try:
+                      pat = re.compile(query, re.IGNORECASE)
+                  except Exception as e:
+                      output = f"Error: invalid regex ({e})"
+                  else:
+                      results = []
+                      for mem in store.get_memories():
+                          text = mem.get('initial_memory') or mem.get('final_memory') or ''
+                          if pat.search(text):
+                              results.append(mem)
+                              if limit and len(results) >= limit:
+                                  break
+                      output = _json.dumps(results, indent=2, default=str)
+
+          elif action in ('read', 'load', 'list'):
+              results = store.get_memories(status=status, limit=limit)
+              output = _json.dumps(results, indent=2, default=str)
+
+          elif action in ('create', 'add'):
+              if not content:
+                  output = "Error: content is required for create"
+              else:
+                  _npc = context.get('npc')
+                  _team = context.get('team')
+                  new_id = store.append_memory(
+                      message_id=context.get('message_id', ''),
+                      conversation_id=context.get('conversation_id', ''),
+                      npc=_npc.name if _npc and hasattr(_npc, 'name') else '',
+                      team=_team.name if _team and hasattr(_team, 'name') else '',
+                      directory_path=directory,
+                      initial_memory=content,
+                      status=status or 'pending_approval',
+                      model=getattr(_npc, 'model', '') if _npc else '',
+                      provider=getattr(_npc, 'provider', '') if _npc else '',
+                  )
+                  output = new_id
+
+          elif action in ('update', 'replace'):
+              if not mem_id:
+                  output = "Error: mem_id is required for update"
+              else:
+                  ok = store.update_memory(mem_id, status or 'pending_approval', final_memory=content or None)
+                  output = "updated" if ok else "not_found"
+
+          elif action in ('delete', 'remove'):
+              if not mem_id:
+                  output = "Error: mem_id is required for delete"
+              else:
+                  data = store.load()
+                  before = len(data.get('memories', []))
+                  data['memories'] = [m for m in data.get('memories', []) if m.get('id') != mem_id]
+                  if len(data['memories']) < before:
+                      store.save(data)
+                      output = "deleted"
+                  else:
+                      output = "not_found"
+
+          elif action == 'context':
+              output = store.build_context(max_memories=limit)
+
+          else:
+              output = f"Error: unknown action '{action}'. Supported: search, regex, read, create, update, delete, context"

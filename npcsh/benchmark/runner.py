@@ -27,6 +27,7 @@ class BenchmarkConfig:
     output_dir: Optional[str] = None
     npc_name: Optional[str] = None
     timeout: int = 600
+    memory: bool = False
     extra_args: List[str] = field(default_factory=list)
 
 
@@ -158,6 +159,7 @@ class BenchmarkRunner:
         n_tasks: Optional[int] = None,
         npc_name: Optional[str] = None,
         timeout: int = 600,
+        memory: bool = False,
     ) -> BenchmarkResult:
         """
         Run Terminal-Bench evaluation with npcsh.
@@ -172,10 +174,13 @@ class BenchmarkRunner:
             n_tasks: Optional limit on number of tasks to run
             npc_name: Optional NPC name to use (e.g., "corca")
             timeout: Per-task timeout in seconds
+            memory: Whether to enable memory/knowledge context injection
 
         Returns:
             BenchmarkResult with evaluation metrics
         """
+        os.environ["NPCSH_MEMORY"] = "1" if memory else "0"
+
         deps = self.check_dependencies()
         if not deps["harbor"]:
             print("Harbor not installed. Installing...")
@@ -229,6 +234,7 @@ class BenchmarkRunner:
         print(f"  Concurrent tasks: {n_concurrent}")
         if n_tasks:
             print(f"  Max tasks: {n_tasks}")
+        print(f"  Memory: {'on' if memory else 'off'}")
         print(f"  Output: {output_dir}")
         if npc_name:
             print(f"  NPC: {npc_name}")
@@ -259,6 +265,7 @@ class BenchmarkRunner:
                 "dataset_version": dataset_version,
                 "n_concurrent": n_concurrent,
                 "npc_name": npc_name,
+                "memory": memory,
                 "duration_seconds": duration,
                 "result": {
                     "success": result.success,
@@ -329,6 +336,7 @@ class BenchmarkRunner:
         dataset_version: Optional[str] = None,
         n_concurrent: int = 4,
         task_ids: Optional[List[str]] = None,
+        memory: bool = False,
     ) -> Dict[str, BenchmarkResult]:
         """
         Compare multiple models on the same benchmark.
@@ -364,6 +372,7 @@ class BenchmarkRunner:
                 dataset_version=dataset_version,
                 n_concurrent=n_concurrent,
                 task_ids=task_ids,
+                memory=memory,
             )
 
             results[f"{provider}/{model}"] = result
@@ -443,6 +452,7 @@ def quick_test(
     model: str = "claude-sonnet-4-20250514",
     provider: str = "anthropic",
     n_tasks: int = 3,
+    memory: bool = False,
 ) -> BenchmarkResult:
     """
     Run a quick test with a few tasks to verify setup.
@@ -455,6 +465,7 @@ def quick_test(
         provider=provider,
         n_concurrent=1,
         n_tasks=n_tasks,
+        memory=memory,
     )
 
 
@@ -485,6 +496,11 @@ Examples:
     parser.add_argument("--concurrent", "-n", type=int, default=4,
                        help="Number of concurrent tasks")
     parser.add_argument("--npc", help="NPC name to use")
+    memory_group = parser.add_mutually_exclusive_group()
+    memory_group.add_argument("--memory", action="store_true",
+                             help="Enable memory/knowledge context injection")
+    memory_group.add_argument("--no-memory", action="store_true",
+                             help="Disable memory/knowledge context injection")
     parser.add_argument("--quick", action="store_true",
                        help="Run quick test with few tasks")
     parser.add_argument("--list-runs", action="store_true",
@@ -537,11 +553,12 @@ Examples:
         ]
         runner.compare_models(
             models_to_compare,
-            n_concurrent=args.concurrent
+            n_concurrent=args.concurrent,
+            memory=args.memory,
         )
 
     elif args.quick:
-        result = quick_test(args.model, args.provider)
+        result = quick_test(args.model, args.provider, memory=args.memory)
         print(f"\nQuick test result: {'PASS' if result.success else 'FAIL'}")
         print(f"Accuracy: {result.accuracy:.1%}")
 
@@ -553,6 +570,7 @@ Examples:
             dataset_version=args.version,
             n_concurrent=args.concurrent,
             npc_name=args.npc,
+            memory=args.memory,
         )
         print("\nBenchmark complete!")
         print(f"Accuracy: {result.accuracy:.1%}")

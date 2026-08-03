@@ -26,5 +26,7 @@ jinxes:
   - {{ Jinx('read') }}
   - {{ Jinx('write') }}
   - {{ Jinx('execute') }}
+  - {{ Jinx('memory') }}
+  - {{ Jinx('knowledge') }}
   - {{ Jinx('chat') }}
   - {{ Jinx('stop') }}
