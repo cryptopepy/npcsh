@@ -17,7 +17,8 @@ use crate::cli_providers::{CLI_PROVIDERS, run_cli_provider};
 use crate::cron::CronRegistry;
 use npcsh::markdown::render_block;
 use npcsh::{
-    exec_jinx_file, exec_npc_file, find_team_dir, init_team, resolve_team_layout, stream_client,
+    discover_knowledge_stores, exec_jinx_file, exec_npc_file, find_team_dir,
+    format_memory_context, init_team, memory_context_enabled, resolve_team_layout, stream_client,
 };
 
 fn cli_sessions() -> &'static Mutex<HashMap<u32, String>> {
@@ -776,6 +777,15 @@ async fn main() -> Result<()> {
     let mut current_pid: u32 = 0;
     let mut kernel = Kernel::boot(&team_dir, &db_path)?;
 
+    // Default the active NPC to the team's lead/forenpc instead of the init process.
+    if cli_npc.is_none() {
+        if let Some(lead) = kernel.team.forenpc.as_deref() {
+            if let Some(proc) = kernel.find_by_name(lead) {
+                current_pid = proc.pid;
+            }
+        }
+    }
+
     // One-shot/benchmark mode: let the runner pin the conversation_id so it can
     // later retrieve the exact transcript from npcsh_history.db.
     if let Some(forced_conv_id) = std::env::var("NPCSH_CONVERSATION_ID")
@@ -880,7 +890,7 @@ async fn main() -> Result<()> {
     let (cron_tx, mut cron_rx) = tokio::sync::mpsc::unbounded_channel();
     crate::cron::spawn_cron_ticker(cron_registry.clone(), cron_tx);
 
-    print_welcome(&kernel);
+    print_welcome(&kernel, current_pid);
 
     let current_version = env!("NPCSH_VERSION").to_string();
     let http_client_for_update = http_client.clone();
@@ -1359,7 +1369,24 @@ async fn run_stream_turn_with_interrupt(
         })?;
         let model = process.npc.resolved_model();
         let provider = process.npc.resolved_provider();
-        let system = process.npc.system_prompt(kernel.team.context.as_deref());
+        let base_system = process.npc.system_prompt(kernel.team.context.as_deref());
+        let has_memory_jinx = kernel.jinxes.contains_key("memory");
+        let has_knowledge_jinx = kernel.jinxes.contains_key("knowledge");
+        let system = if memory_context_enabled() && (has_memory_jinx || has_knowledge_jinx) {
+            if let Some(team_dir) = kernel.team.source_dir.as_deref() {
+                let stores = discover_knowledge_stores(team_dir);
+                let appendix = format_memory_context(&stores, has_memory_jinx, has_knowledge_jinx);
+                if appendix.is_empty() {
+                    base_system
+                } else {
+                    format!("{}\n{}", base_system, appendix)
+                }
+            } else {
+                base_system
+            }
+        } else {
+            base_system
+        };
         let npc_name = process.npc.name.clone();
         let conv_id = process.conversation_id.clone();
         let team_name_str = kernel
@@ -3203,11 +3230,27 @@ async fn spawn_npc_from_registered_teams(
     Ok(0)
 }
 
-fn print_welcome(kernel: &Kernel) {
+fn current_npc_name(kernel: &Kernel, current_pid: u32) -> String {
+    kernel
+        .get_process(current_pid)
+        .map(|p| p.npc.name.clone())
+        .unwrap_or_default()
+}
+
+fn current_npc_jinxes(kernel: &Kernel, current_pid: u32) -> std::collections::HashSet<String> {
+    kernel
+        .get_process(current_pid)
+        .map(|p| p.npc.jinx_names.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+fn print_welcome(kernel: &Kernel, current_pid: u32) {
     let s = kernel.stats();
 
     const BLUE: &str = "\x1b[1;94m";
     const RUST: &str = "\x1b[1;38;5;202m";
+    const GREEN: &str = "\x1b[1;32m";
+    const BOLD_GREEN: &str = "\x1b[1;32m";
 
     eprintln!();
     eprintln!("  {BLUE}                         {RESET}{RUST}     ██╗     {RESET}");
@@ -3276,6 +3319,8 @@ fn print_welcome(kernel: &Kernel) {
     let mut sorted_groups: Vec<_> = groups.keys().cloned().collect();
     sorted_groups.sort_by_key(|g| group_order.iter().position(|o| o == g).unwrap_or(99));
 
+    let active_jinxes = current_npc_jinxes(kernel, current_pid);
+
     for group in &sorted_groups {
         if let Some(subdirs) = groups.get(group) {
             eprintln!("  {RUST}{group}/{RESET}");
@@ -3284,11 +3329,21 @@ fn print_welcome(kernel: &Kernel) {
                 sorted.sort();
                 let mut current = String::from("    ");
                 for item in &sorted {
-                    if current.len() + item.len() + 2 > 80 && current.trim().len() > 0 {
+                    let colored = if active_jinxes.contains(item) {
+                        format!("{BOLD_GREEN}{item}{RESET}")
+                    } else {
+                        item.clone()
+                    };
+                    let display_width = if active_jinxes.contains(item) {
+                        item.len()
+                    } else {
+                        item.len()
+                    };
+                    if current.len() + display_width + 2 > 80 && current.trim().len() > 0 {
                         eprintln!("{}", current);
                         current = String::from("    ");
                     }
-                    current.push_str(item);
+                    current.push_str(&colored);
                     current.push_str("  ");
                 }
                 if current.trim().len() > 0 {
@@ -3299,12 +3354,27 @@ fn print_welcome(kernel: &Kernel) {
                 if let Some(sd) = sd {
                     let mut sorted = names.clone();
                     sorted.sort();
-                    eprintln!("      {DIM}{sd}:{RESET} {}", sorted.join("  "));
+                    let rendered: Vec<String> = sorted
+                        .iter()
+                        .map(|n| {
+                            if active_jinxes.contains(n) {
+                                format!("{BOLD_GREEN}{n}{RESET}")
+                            } else {
+                                n.clone()
+                            }
+                        })
+                        .collect();
+                    eprintln!("      {DIM}{sd}:{RESET} {}", rendered.join("  "));
                 }
             }
         }
     }
 
+    eprintln!();
+    eprintln!(
+        "  {DIM}jinxes in {BOLD_GREEN}bold{RESET}{DIM} are available to the current agent (@{}){RESET}",
+        current_npc_name(kernel, current_pid)
+    );
     eprintln!();
     eprintln!("  {DIM}core commands:{RESET}");
     for category in COMMAND_CATEGORIES {

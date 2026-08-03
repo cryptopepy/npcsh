@@ -89,7 +89,7 @@ class NpcshAgent(BaseInstalledAgent):
         for key in [
             "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
             "GEMINI_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY",
-            "OPENROUTER_API_KEY", "OLLAMA_HOST",
+            "OPENROUTER_API_KEY", "OLLAMA_HOST", "NPCSH_MEMORY",
         ]:
             val = os.environ.get(key)
             if val:

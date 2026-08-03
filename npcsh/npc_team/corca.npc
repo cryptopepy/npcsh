@@ -45,6 +45,8 @@ jinxes:
   - {{ Jinx('read') }}
   - {{ Jinx('write') }}
   - {{ Jinx('execute') }}
+  - {{ Jinx('memory') }}
+  - {{ Jinx('knowledge') }}
   - {{ Jinx('explore') }}
   - {{ Jinx('delegate') }}
   - {{ Jinx('convene') }}

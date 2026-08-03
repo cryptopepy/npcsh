@@ -20,6 +20,8 @@ jinxes:
   - {{ Jinx('read') }}
   - {{ Jinx('write') }}
   - {{ Jinx('execute') }}
+  - {{ Jinx('memory') }}
+  - {{ Jinx('knowledge') }}
   - {{ Jinx('web_search') }}
   - {{ Jinx('chat') }}
   - {{ Jinx('stop') }}

@@ -1,0 +1,132 @@
+jinx_name: knowledge
+description: |
+  Create, read, update, delete, or search knowledge entries in a `.knowledge.yaml` store.
+  Knowledge entries are links, references, or notes (not the same as memories).
+permissions:
+  default: ask
+inputs:
+  - action: "search"
+  - directory: ""
+  - query: ""
+  - entry_id: ""
+  - title: ""
+  - url: ""
+  - type: ""
+  - notes: ""
+  - limit: "20"
+steps:
+  - name: crud
+    engine: python
+    code: |
+      import json as _json
+      import os
+      import re
+      import uuid
+      from datetime import datetime, timezone
+
+      from npcpy.memory.knowledge_store import KnowledgeStore
+
+      def _utcnow():
+          return datetime.now(timezone.utc).isoformat()
+
+      action = (context.get('action') or 'search').strip().lower()
+      directory = context.get('directory', '') or context.get('current_path', '') or os.getcwd()
+      directory = os.path.abspath(os.path.expanduser(directory))
+      query = context.get('query', '')
+      entry_id = context.get('entry_id', '')
+      title = context.get('title', '')
+      url = context.get('url', '')
+      _type = context.get('type', '')
+      notes = context.get('notes', '')
+      limit = int(context.get('limit', 20) or 20)
+
+      if not os.path.isdir(directory):
+          output = f"Error: directory not found: {directory}"
+      else:
+          store = KnowledgeStore(directory)
+          data = store.load()
+          entries = data.setdefault('knowledge', [])
+
+          def _matches(e):
+              text = ' '.join(str(e.get(k, '')) for k in ('title', 'url', 'type', 'notes'))
+              return query.lower() in text.lower()
+
+          if action in ('search', 'find'):
+              if not query:
+                  output = "Error: query is required for search"
+              else:
+                  results = [e for e in entries if _matches(e)][:limit]
+                  output = _json.dumps(results, indent=2, default=str)
+
+          elif action == 'regex':
+              if not query:
+                  output = "Error: query regex is required"
+              else:
+                  try:
+                      pat = re.compile(query, re.IGNORECASE)
+                  except Exception as e:
+                      output = f"Error: invalid regex ({e})"
+                  else:
+                      results = []
+                      for e in entries:
+                          text = ' '.join(str(e.get(k, '')) for k in ('title', 'url', 'type', 'notes'))
+                          if pat.search(text):
+                              results.append(e)
+                              if limit and len(results) >= limit:
+                                  break
+                      output = _json.dumps(results, indent=2, default=str)
+
+          elif action in ('read', 'load', 'list'):
+              results = list(entries)[:limit]
+              output = _json.dumps(results, indent=2, default=str)
+
+          elif action in ('create', 'add'):
+              if not title and not url:
+                  output = "Error: title or url is required for create"
+              else:
+                  new_entry = {
+                      'id': entry_id or uuid.uuid4().hex,
+                      'title': title,
+                      'url': url,
+                      'type': _type or 'note',
+                      'notes': notes,
+                      'created_at': _utcnow(),
+                  }
+                  entries.append(new_entry)
+                  store.save(data)
+                  output = new_entry['id']
+
+          elif action in ('update', 'replace'):
+              if not entry_id:
+                  output = "Error: entry_id is required for update"
+              else:
+                  found = False
+                  for e in entries:
+                      if e.get('id') == entry_id:
+                          if title: e['title'] = title
+                          if url: e['url'] = url
+                          if _type: e['type'] = _type
+                          if notes: e['notes'] = notes
+                          e['updated_at'] = _utcnow()
+                          found = True
+                          break
+                  if found:
+                      store.save(data)
+                      output = "updated"
+                  else:
+                      output = "not_found"
+
+          elif action in ('delete', 'remove'):
+              if not entry_id:
+                  output = "Error: entry_id is required for delete"
+              else:
+                  before = len(entries)
+                  data['knowledge'] = [e for e in entries if e.get('id') != entry_id]
+                  if len(data['knowledge']) < before:
+                      store.save(data)
+                      output = "deleted"
+                  else:
+                      output = "not_found"
+
+          else:
+              output = f"Error: unknown action '{action}'. Supported: search, regex, read, create, update, delete"
