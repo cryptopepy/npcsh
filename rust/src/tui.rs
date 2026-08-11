@@ -1004,6 +1004,8 @@ except Exception:
 try:
     for pv in lu._infer_valid_provider_from_env_vars():
         prov = pv.value
+        if prov in out:
+            continue
         try:
             out[prov] = [str(x) for x in get_valid_models(custom_llm_provider=prov)[:50]]
         except Exception:

@@ -1750,6 +1750,11 @@ async fn run_interactive_stream_turn_once(
     use crossterm::event::{self, Event, KeyCode, KeyModifiers};
     use std::time::Duration;
 
+    let _raw_guard = {
+        let _ = crossterm::terminal::enable_raw_mode();
+        RawModeRestore
+    };
+
     let (interrupt_tx, interrupt_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
     let (queue_tx, mut queue_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
@@ -1813,6 +1818,13 @@ async fn run_interactive_stream_turn_once(
     }
 
     (result, queued)
+}
+
+struct RawModeRestore;
+impl Drop for RawModeRestore {
+    fn drop(&mut self) {
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
 }
 
 async fn run_interactive_stream_turn(
