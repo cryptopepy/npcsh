@@ -1776,6 +1776,158 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
+fn pick_commit_msg_model() -> Option<String> {
+    if let Ok(m) = std::env::var("NPCSH_COMMIT_MSG_MODEL") {
+        if !m.is_empty() {
+            return Some(m);
+        }
+    }
+
+    let output = std::process::Command::new("curl")
+        .args(&["-s", "--max-time", "2", "http://localhost:11434/api/tags"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let body = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let models = parsed.get("models")?.as_array()?;
+
+    let names: Vec<String> = models
+        .iter()
+        .filter_map(|m| m.get("name")?.as_str().map(|s| s.to_string()))
+        .collect();
+
+    let preferred = [
+        "qwen3:1.7b",
+        "gemma3:1b",
+        "hf.co/npc-worldwide/tinytim-v2-1b-it:latest",
+        "hf.co/npc-worldwide/tinytim-v2-1b-it:Q4_K_M",
+        "llama3.2:latest",
+        "olmo-3:latest",
+    ];
+
+    for p in &preferred {
+        if names.iter().any(|n| n == *p) {
+            return Some(p.to_string());
+        }
+    }
+
+    None
+}
+
+fn generate_commit_message(model: &str, diff: &str) -> Option<String> {
+    let prompt = format!(
+        "You are a helpful assistant that writes concise git commit messages.\n\
+         Rules:\n\
+         - Use imperative mood: \"fix bug\" not \"fixed bug\".\n\
+         - First line must be under 72 characters.\n\
+         - If the change is complex, add a blank line and then a 1-2 sentence explanation.\n\
+         - Do NOT include code blocks, markdown, or quotes around the message.\n\
+         - Be specific about what changed and why.\n\n\
+         Here is the diff:\n\n{}\n\nCommit message:",
+        diff
+    );
+
+    let payload = format!(
+        r#"{{"model":{},"prompt":{},"stream":false,"options":{{"temperature":0.3,"num_predict":200}}}}"#,
+        serde_json::to_string(model).ok()?,
+        serde_json::to_string(&prompt).ok()?
+    );
+
+    let mut child = std::process::Command::new("curl")
+        .args(&[
+            "-s",
+            "--max-time",
+            "30",
+            "http://localhost:11434/api/generate",
+            "-d",
+            "@-",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    {
+        use std::io::Write;
+        child.stdin.take()?.write_all(payload.as_bytes()).ok()?;
+    }
+
+    let output = child.wait_with_output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let text = parsed.get("response")?.as_str()?.trim().to_string();
+
+    if text.is_empty() {
+        return None;
+    }
+
+    // Clean up common LLM artifacts
+    let text = text
+        .trim_start_matches('"')
+        .trim_end_matches('"')
+        .trim_start_matches('`')
+        .trim_end_matches('`')
+        .trim_start_matches('\'')
+        .trim_end_matches('\'')
+        .trim_start_matches("Commit message:")
+        .trim()
+        .to_string();
+
+    Some(text)
+}
+
+fn store_commit_training(
+    repo: &Path,
+    diff: &str,
+    generated: &str,
+    final_msg: &str,
+    model: &str,
+) {
+    let branch = run_git(repo, &["branch", "--show-current"])
+        .ok()
+        .map(git_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    let entry = serde_json::json!({
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "repo": repo.file_name().and_then(|s| s.to_str()).unwrap_or(""),
+        "repo_path": repo.display().to_string(),
+        "branch": branch,
+        "diff": diff,
+        "generated": generated,
+        "final": final_msg,
+        "edited": generated != final_msg,
+        "model": model,
+    });
+
+    let path = std::path::PathBuf::from(
+        shellexpand::tilde("~/.npcsh/data/commit_messages.jsonl").to_string(),
+    );
+
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(file, "{}", entry);
+    }
+}
+
 pub fn run_commit_tui() -> Result<()> {
     let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
     let mut out = io::stdout();
@@ -1789,6 +1941,7 @@ pub fn run_commit_tui() -> Result<()> {
 
     let mut sel: usize = 0;
     let mut msg = String::new();
+    let mut generated_msg = String::new();
     let mut stage: usize = 0;
 
     loop {
@@ -1832,11 +1985,21 @@ pub fn run_commit_tui() -> Result<()> {
                 " [j/k] Nav  [Enter] Message  [q] Quit ",
             );
         } else {
-            wline(&mut out, 3, "  Commit message:");
+            let label = if !generated_msg.is_empty() {
+                "  Commit message (generated):"
+            } else {
+                "  Commit message:"
+            };
+            wline(&mut out, 3, label);
             wline(&mut out, 5, &format!("  > {}", msg));
             let _ = write!(out, "\x1b[{};{}H", 5, 6 + msg.len());
             hr(&mut out, cols, rows - 2);
-            footer_line(&mut out, cols, rows, " [Enter] Commit  [Esc] Back ");
+            footer_line(
+                &mut out,
+                cols,
+                rows,
+                " [Enter] Commit  [g] Regenerate  [Esc] Back ",
+            );
         }
 
         let _ = out.flush();
@@ -1854,6 +2017,8 @@ pub fn run_commit_tui() -> Result<()> {
                 KeyCode::Esc => {
                     if stage == 1 {
                         stage = 0;
+                        msg.clear();
+                        generated_msg.clear();
                     } else {
                         break;
                     }
@@ -1870,13 +2035,85 @@ pub fn run_commit_tui() -> Result<()> {
                 }
                 KeyCode::Enter => {
                     if stage == 0 {
+                        msg.clear();
+                        generated_msg.clear();
+
+                        let diff = run_git(&repo, &["diff", "--cached"])
+                            .ok()
+                            .map(git_str)
+                            .unwrap_or_default();
+
+                        if !diff.is_empty() {
+                            let max_len = 6000;
+                            let truncated_diff = if diff.len() > max_len {
+                                format!("{}... (diff truncated)", &diff[..max_len])
+                            } else {
+                                diff
+                            };
+
+                            wline(&mut out, rows - 3, "  Generating commit message...");
+                            let _ = out.flush();
+
+                            if let Some(model) = pick_commit_msg_model() {
+                                if let Some(generated) =
+                                    generate_commit_message(&model, &truncated_diff)
+                                {
+                                    msg = generated.clone();
+                                    generated_msg = generated;
+                                }
+                            }
+                        }
+
                         stage = 1;
                     } else {
                         let _ = run_git(&repo, &["add", "-A"]);
                         if !msg.is_empty() {
+                            let diff = run_git(&repo, &["diff", "--cached"])
+                                .ok()
+                                .map(git_str)
+                                .unwrap_or_default();
+
+                            if !diff.is_empty() || !generated_msg.is_empty() {
+                                let model = pick_commit_msg_model().unwrap_or_default();
+                                store_commit_training(
+                                    &repo,
+                                    &diff,
+                                    &generated_msg,
+                                    &msg,
+                                    &model,
+                                );
+                            }
+
                             let _ = run_git(&repo, &["commit", "-m", &msg]);
                         }
                         break;
+                    }
+                }
+                KeyCode::Char('g') if stage == 1 => {
+                    let diff = run_git(&repo, &["diff", "--cached"])
+                        .ok()
+                        .map(git_str)
+                        .unwrap_or_default();
+
+                    if !diff.is_empty() {
+                        let max_len = 6000;
+                        let truncated_diff = if diff.len() > max_len {
+                            format!("{}... (diff truncated)", &diff[..max_len])
+                        } else {
+                            diff
+                        };
+
+                        wline(&mut out, rows - 3, "  Regenerating...");
+                        let _ = out.flush();
+
+                        if let Some(model) = pick_commit_msg_model() {
+                            if let Some(generated) =
+                                generate_commit_message(&model, &truncated_diff)
+                            {
+                                msg = generated.clone();
+                                generated_msg = generated;
+                            }
+                        }
                     }
                 }
                 KeyCode::Char(c) if stage == 1 => msg.push(c),
