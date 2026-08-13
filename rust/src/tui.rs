@@ -1,3 +1,4 @@
+use chrono::Utc;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
 use npcrs::kernel::Kernel;
@@ -2927,9 +2928,9 @@ pub fn run_memories_tui() -> Result<()> {
             ),
         );
         let foot = if preview {
-            " [Esc] Back  [a] Approve  [x] Reject  [j/k] Prev/Next  [q] Quit "
+            " [Esc] Back  [a] Approve  [x] Reject  [e] Edit  [d] Delete  [j/k] Prev/Next  [q] Quit "
         } else {
-            " [Tab] Filter  [j/k] Nav  [Enter] Preview  [a] Approve  [x] Reject  [q] Quit "
+            " [Tab] Filter  [j/k] Nav  [Enter] Preview  [a] Approve  [x] Reject  [e] Edit  [d] Delete  [q] Quit "
         };
         footer_line(&mut out, cols, rows, foot);
         let _ = out.flush();
@@ -3015,6 +3016,554 @@ pub fn run_memories_tui() -> Result<()> {
                         msg_color = "31";
                         memories = load_memories(&conn, tabs.get(tab).and_then(|t| t.as_deref()));
                         clamp_selection(&mut sel, &mut scroll, memories.len(), body_h);
+                    }
+                }
+                KeyCode::Char('e') => {
+                    if let Some(mem) = memories.get(sel) {
+                        let text = mem.content();
+                        if let Some(edited) = edit_in_editor(&text, &format!("memory_{}", mem.id)) {
+                            let new_status = if mem.status.to_lowercase().contains("approved") {
+                                "human-edited"
+                            } else {
+                                "pending_approval"
+                            };
+                            update_status(&conn, mem.id, new_status, Some(&edited));
+                            msg = format!("EDITED #{} -> {}", mem.id, new_status);
+                            msg_color = "36";
+                            memories = load_memories(&conn, tabs.get(tab).and_then(|t| t.as_deref()));
+                            clamp_selection(&mut sel, &mut scroll, memories.len(), body_h);
+                        }
+                    }
+                }
+                KeyCode::Char('d') => {
+                    if let Some(mem) = memories.get(sel) {
+                        msg = format!("Press d again to DELETE #{} or any other key to cancel", mem.id);
+                        msg_color = "31";
+                        let _ = out.flush();
+                        if let Ok(Event::Key(confirm)) = event::read() {
+                            if confirm.kind != KeyEventKind::Release {
+                                if let KeyCode::Char('d') = confirm.code {
+                                    let _ = conn.execute("DELETE FROM memory_lifecycle WHERE id = ?1", params![mem.id]);
+                                    msg = format!("DELETED #{}", mem.id);
+                                    msg_color = "31";
+                                    memories = load_memories(&conn, tabs.get(tab).and_then(|t| t.as_deref()));
+                                    clamp_selection(&mut sel, &mut scroll, memories.len(), body_h);
+                                } else {
+                                    msg = "Delete cancelled".to_string();
+                                    msg_color = "33";
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn run_knowledge_tui() -> Result<()> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use npcsh::{discover_knowledge_stores, KnowledgeStoreInfo};
+
+    #[derive(Clone, Debug)]
+    enum Entry {
+        Memory {
+            status: String,
+            text: String,
+            original: Option<String>,
+        },
+        Item {
+            section: String,
+            idx: usize,
+            label: String,
+            full: serde_yaml::Value,
+        },
+    }
+
+    impl Entry {
+        fn label(&self) -> String {
+            match self {
+                Entry::Memory { status, text, .. } => {
+                    let icon = if status.to_lowercase().contains("approved") {
+                        "\x1b[32m+\x1b[0m"
+                    } else if status.to_lowercase().contains("rejected") {
+                        "\x1b[31m-\x1b[0m"
+                    } else if status.to_lowercase().contains("edited") {
+                        "\x1b[36m~\x1b[0m"
+                    } else {
+                        "\x1b[33m*\x1b[0m"
+                    };
+                    let preview: String = text.replace('\n', " ").chars().take(55).collect();
+                    format!("{} {} {}", icon, status, preview)
+                }
+                Entry::Item { section, idx, label, .. } => {
+                    format!("\x1b[90m[{}:{}]\x1b[0m {}", section, idx, label)
+                }
+            }
+        }
+
+        fn detail(&self) -> String {
+            match self {
+                Entry::Memory { text, original, .. } => {
+                    let mut out = format!("{}\n", text);
+                    if let Some(orig) = original {
+                        if orig != text {
+                            out.push_str(&format!("\n\x1b[90mOriginal:\x1b[0m\n{}\n", orig));
+                        }
+                    }
+                    out
+                }
+                Entry::Item { full, .. } => serde_yaml::to_string(full).unwrap_or_default(),
+            }
+        }
+    }
+
+    fn load_store_entries(path: &std::path::Path) -> Vec<Entry> {
+        let mut entries = Vec::new();
+        let raw = match std::fs::read_to_string(path) {
+            Ok(r) => r,
+            Err(_) => return entries,
+        };
+        let value: serde_yaml::Value = match serde_yaml::from_str(&raw) {
+            Ok(v) => v,
+            Err(_) => return entries,
+        };
+        if let Some(memories) = value.get("memories").and_then(|v| v.as_sequence()) {
+            for (idx, mem) in memories.iter().enumerate() {
+                let status = mem
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("pending")
+                    .to_string();
+                let text = mem
+                    .get("final_memory")
+                    .or_else(|| mem.get("initial_memory"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let original = mem.get("initial_memory").and_then(|v| v.as_str()).map(|s| s.to_string());
+                entries.push(Entry::Memory { status, text, original });
+            }
+        }
+        for section in ["knowledge", "concepts", "links"] {
+            if let Some(seq) = value.get(section).and_then(|v| v.as_sequence()) {
+                for (idx, item) in seq.iter().enumerate() {
+                    let label = item
+                        .get("name")
+                        .or_else(|| item.get("relation"))
+                        .or_else(|| item.get("id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(entry)")
+                        .to_string();
+                    entries.push(Entry::Item {
+                        section: section.to_string(),
+                        idx,
+                        label,
+                        full: item.clone(),
+                    });
+                }
+            }
+        }
+        entries
+    }
+
+    fn save_memory_edit(path: &std::path::Path, entry_idx: usize, new_text: &str) -> bool {
+        let raw = match std::fs::read_to_string(path) {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        let mut value: serde_yaml::Value = match serde_yaml::from_str(&raw) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        if let Some(memories) = value
+            .get_mut("memories")
+            .and_then(|v| v.as_sequence_mut())
+        {
+            if let Some(mem) = memories.get_mut(entry_idx) {
+                if let Some(map) = mem.as_mapping_mut() {
+                    let status = map
+                        .get(&serde_yaml::Value::String("status".to_string()))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("pending_approval")
+                        .to_string();
+                    let new_status = if status.to_lowercase().contains("approved") {
+                        "human-edited".to_string()
+                    } else {
+                        "pending_approval".to_string()
+                    };
+                    map.insert(
+                        serde_yaml::Value::String("final_memory".to_string()),
+                        serde_yaml::Value::String(new_text.to_string()),
+                    );
+                    map.insert(
+                        serde_yaml::Value::String("status".to_string()),
+                        serde_yaml::Value::String(new_status),
+                    );
+                    map.insert(
+                        serde_yaml::Value::String("updated_at".to_string()),
+                        serde_yaml::Value::String(chrono::Utc::now().to_rfc3339()),
+                    );
+                }
+            }
+        }
+        std::fs::write(path, serde_yaml::to_string(&value).unwrap_or_default()).is_ok()
+    }
+
+    fn delete_memory_entry(path: &std::path::Path, entry_idx: usize) -> bool {
+        let raw = match std::fs::read_to_string(path) {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        let mut value: serde_yaml::Value = match serde_yaml::from_str(&raw) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        if let Some(memories) = value
+            .get_mut("memories")
+            .and_then(|v| v.as_sequence_mut())
+        {
+            if entry_idx < memories.len() {
+                memories.remove(entry_idx);
+            }
+        }
+        std::fs::write(path, serde_yaml::to_string(&value).unwrap_or_default()).is_ok()
+    }
+
+    let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
+    let mut out = io::stdout();
+
+    let mut stores = discover_knowledge_stores("");
+    if stores.is_empty() {
+        wline(&mut out, 1, "\x1b[90mNo .knowledge.yaml stores found.\x1b[0m");
+        let _ = out.flush();
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        return Ok(());
+    }
+
+    let mut store_sel: usize = 0;
+    let mut entry_sel: usize = 0;
+    let mut store_scroll: usize = 0;
+    let mut entry_scroll: usize = 0;
+    let mut focus: usize = 0; // 0 = stores, 1 = entries
+    let mut preview: bool = false;
+    let mut msg: String = String::new();
+    let mut msg_color: &str = "33";
+    let mut entries: Vec<Entry> = Vec::new();
+
+    fn store_path(store: &KnowledgeStoreInfo) -> std::path::PathBuf {
+        std::path::Path::new(&store.directory).join(".knowledge.yaml")
+    }
+
+    fn reload_entries(stores: &[KnowledgeStoreInfo], store_sel: usize, entries: &mut Vec<Entry>) {
+        entries.clear();
+        if let Some(store) = stores.get(store_sel) {
+            *entries = load_store_entries(&store_path(store));
+        }
+    }
+
+    reload_entries(&stores, store_sel, &mut entries);
+
+    fn clamp(sel: &mut usize, scroll: &mut usize, count: usize, visible: usize) {
+        if count == 0 {
+            *sel = 0;
+            *scroll = 0;
+            return;
+        }
+        if *sel >= count {
+            *sel = count - 1;
+        }
+        if *sel < *scroll {
+            *scroll = *sel;
+        } else if *sel >= *scroll + visible {
+            *scroll = sel.saturating_sub(visible) + 1;
+        }
+    }
+
+    fn wrap(text: &str, width: usize) -> Vec<String> {
+        let mut lines = Vec::new();
+        for para in text.split('\n') {
+            let mut current = String::new();
+            for word in para.split_whitespace() {
+                if current.is_empty() {
+                    current.push_str(word);
+                } else if current.len() + 1 + word.len() <= width.saturating_sub(4) {
+                    current.push(' ');
+                    current.push_str(word);
+                } else {
+                    lines.push(current);
+                    current = word.to_string();
+                }
+            }
+            if !current.is_empty() {
+                lines.push(current);
+            }
+            lines.push(String::new());
+        }
+        lines
+    }
+
+    loop {
+        let (cols, rows) = term_size();
+        let left_w = (cols / 2).saturating_sub(1).max(20);
+        let right_w = cols.saturating_sub(left_w + 3).max(20);
+        let body_h = rows.saturating_sub(7).max(1);
+        clear_all(&mut out);
+
+        header_line(&mut out, cols, " Knowledge Stores ");
+        hr(&mut out, cols, 2);
+        wline(
+            &mut out,
+            3,
+            &format!(
+                " \x1b[{}mStores\x1b[0m   \x1b[{}mEntries ({})",
+                if focus == 0 { "1;7" } else { "90" },
+                if focus == 1 { "1;7" } else { "90" },
+                entries.len()
+            ),
+        );
+        hr(&mut out, cols, 4);
+
+        // Left pane: stores
+        for r in 0..body_h {
+            let idx = store_scroll + r;
+            let row = 5 + r;
+            if idx >= stores.len() {
+                wline(&mut out, row, "");
+                continue;
+            }
+            let store = &stores[idx];
+            let name = std::path::Path::new(&store.directory)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&store.directory)
+                .to_string();
+            let line = format!(
+                " {} ({}m/{}k/{}c/{}l)",
+                name, store.memory_count, store.knowledge_count, store.concept_count, store.link_count
+            );
+            let padded = if idx == store_sel {
+                format!("\x1b[7m {} \x1b[0m", line.pad(left_w))
+            } else {
+                format!(" {}", line.chars().take(left_w).collect::<String>())
+            };
+            wline(&mut out, row, &padded);
+        }
+
+        // Pane divider
+        for r in 0..body_h {
+            let _ = write!(out, "\x1b[{};{}H\x1b[90m│\x1b[0m", 5 + r, left_w + 2);
+        }
+
+        if preview {
+            if let Some(entry) = entries.get(entry_sel) {
+                let detail = entry.detail();
+                let mut r = 5;
+                for line in wrap(&detail, right_w) {
+                    if r >= rows - 3 {
+                        break;
+                    }
+                    let _ = write!(
+                        out,
+                        "\x1b[{};{}H\x1b[K {}",
+                        r,
+                        left_w + 3,
+                        line.chars().take(right_w).collect::<String>()
+                    );
+                    r += 1;
+                }
+            }
+        } else {
+            for r in 0..body_h {
+                let idx = entry_scroll + r;
+                let row = 5 + r;
+                if idx >= entries.len() {
+                    let _ = write!(out, "\x1b[{};{}H\x1b[K", row, left_w + 3);
+                    continue;
+                }
+                let entry = &entries[idx];
+                let line = entry.label();
+                let padded = if idx == entry_sel {
+                    format!("\x1b[7m {} \x1b[0m", line.pad(right_w))
+                } else {
+                    format!(" {}", line.chars().take(right_w).collect::<String>())
+                };
+                let _ = write!(
+                    out,
+                    "\x1b[{};{}H\x1b[K{}",
+                    row,
+                    left_w + 3,
+                    padded
+                );
+            }
+            if entries.is_empty() {
+                let _ = write!(
+                    out,
+                    "\x1b[{};{}H\x1b[90m  No entries.\x1b[0m",
+                    rows / 2,
+                    left_w + 3
+                );
+            }
+        }
+
+        hr(&mut out, cols, rows - 2);
+        wline(
+            &mut out,
+            rows - 1,
+            &format!(
+                " \x1b[{};1m{}\x1b[0m",
+                msg_color,
+                msg.chars().take(cols - 2).collect::<String>()
+            ),
+        );
+        let foot = if preview {
+            " [Esc] Back  [e] Edit  [d] Delete  [j/k] Nav  [q] Quit "
+        } else {
+            " [Tab] Switch pane  [j/k] Nav  [Enter] Preview  [e] Edit  [d] Delete  [q] Quit "
+        };
+        footer_line(&mut out, cols, rows, foot);
+        let _ = out.flush();
+
+        if let Ok(Event::Key(key)) = event::read() {
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Char('c')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    break;
+                }
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    if preview {
+                        preview = false;
+                        msg.clear();
+                    } else {
+                        break;
+                    }
+                }
+                KeyCode::Tab => {
+                    focus = 1 - focus;
+                    msg.clear();
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if focus == 0 {
+                        if store_sel + 1 < stores.len() {
+                            store_sel += 1;
+                        }
+                        clamp(&mut store_sel, &mut store_scroll, stores.len(), body_h);
+                        reload_entries(&stores, store_sel, &mut entries);
+                        entry_sel = 0;
+                        entry_scroll = 0;
+                    } else if focus == 1 {
+                        if preview {
+                            if entry_sel + 1 < entries.len() {
+                                entry_sel += 1;
+                            }
+                        } else {
+                            if entry_sel + 1 < entries.len() {
+                                entry_sel += 1;
+                            }
+                            clamp(&mut entry_sel, &mut entry_scroll, entries.len(), body_h);
+                        }
+                    }
+                    msg.clear();
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if focus == 0 {
+                        if store_sel > 0 {
+                            store_sel -= 1;
+                        }
+                        clamp(&mut store_sel, &mut store_scroll, stores.len(), body_h);
+                        reload_entries(&stores, store_sel, &mut entries);
+                        entry_sel = 0;
+                        entry_scroll = 0;
+                    } else if focus == 1 {
+                        if entry_sel > 0 {
+                            entry_sel -= 1;
+                        }
+                        clamp(&mut entry_sel, &mut entry_scroll, entries.len(), body_h);
+                    }
+                    msg.clear();
+                }
+                KeyCode::Enter => {
+                    if focus == 0 {
+                        focus = 1;
+                    } else if !entries.is_empty() && !preview {
+                        preview = true;
+                    }
+                    msg.clear();
+                }
+                KeyCode::Char('e') => {
+                    if let Some(entry) = entries.get(entry_sel) {
+                        let (text, is_memory) = match entry {
+                            Entry::Memory { text, .. } => (text.clone(), true),
+                            Entry::Item { full, .. } => {
+                                (serde_yaml::to_string(full).unwrap_or_default(), false)
+                            }
+                        };
+                        if let Some(edited) = edit_in_editor(&text, "knowledge_entry") {
+                            let store = match stores.get(store_sel) {
+                                Some(s) => s,
+                                None => continue,
+                            };
+                            let path = store_path(store);
+                            if is_memory {
+                                if save_memory_edit(&path, entry_sel, &edited) {
+                                    msg = "Memory updated".to_string();
+                                    msg_color = "32";
+                                    reload_entries(&stores, store_sel, &mut entries);
+                                } else {
+                                    msg = "Failed to save memory".to_string();
+                                    msg_color = "31";
+                                }
+                            } else {
+                                msg = "Only memory entries are editable in this view".to_string();
+                                msg_color = "33";
+                            }
+                        }
+                    }
+                }
+                KeyCode::Char('d') => {
+                    if let Some(entry) = entries.get(entry_sel) {
+                        let is_memory = matches!(entry, Entry::Memory { .. });
+                        if !is_memory {
+                            msg = "Only memory entries can be deleted here".to_string();
+                            msg_color = "33";
+                            continue;
+                        }
+                        msg = format!(
+                            "Press d again to DELETE this entry or any other key to cancel"
+                        );
+                        msg_color = "31";
+                        let _ = out.flush();
+                        if let Ok(Event::Key(confirm)) = event::read() {
+                            if confirm.kind != KeyEventKind::Release {
+                                if let KeyCode::Char('d') = confirm.code {
+                                    if let Some(store) = stores.get(store_sel) {
+                                        if delete_memory_entry(&store_path(store), entry_sel) {
+                                            msg = "Entry deleted".to_string();
+                                            msg_color = "31";
+                                            reload_entries(&stores, store_sel, &mut entries);
+                                            clamp(
+                                                &mut entry_sel,
+                                                &mut entry_scroll,
+                                                entries.len(),
+                                                body_h,
+                                            );
+                                        } else {
+                                            msg = "Failed to delete entry".to_string();
+                                            msg_color = "31";
+                                        }
+                                    }
+                                } else {
+                                    msg = "Delete cancelled".to_string();
+                                    msg_color = "33";
+                                }
+                            }
+                        }
                     }
                 }
                 _ => {}

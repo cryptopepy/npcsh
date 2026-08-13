@@ -3,7 +3,8 @@ use npcrs::kernel::Kernel;
 use npcrs::process::{Capabilities, ProcessState};
 use npcrs::{Message, calculate_cost};
 use std::collections::{HashMap, VecDeque};
-use std::io::{self, Write};
+use rand::{Rng, SeedableRng};
+use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -18,7 +19,8 @@ use crate::cron::CronRegistry;
 use npcsh::markdown::render_block;
 use npcsh::{
     discover_knowledge_stores, exec_jinx_file, exec_npc_file, find_team_dir,
-    format_memory_context, init_team, memory_context_enabled, resolve_team_layout, stream_client,
+    format_memory_context, init_team, memory_context_enabled, real_user_home, resolve_team_layout,
+    set_resolved_team_dir, stream_client, team_sync,
 };
 
 fn cli_sessions() -> &'static Mutex<HashMap<u32, String>> {
@@ -392,6 +394,8 @@ enum CoreCmd {
     Ctx,
     History,
     Memories,
+    Mems,
+    Knowledge,
     Model,
     Reattach,
     Set,
@@ -544,6 +548,18 @@ const CORE_COMMANDS: &[CommandDef] = &[
         category: "System / Config",
         description: "Browse memory lifecycle TUI",
         cmd: CoreCmd::Memories,
+    },
+    CommandDef {
+        name: "/mems",
+        category: "System / Config",
+        description: "Browse and edit memory lifecycle TUI",
+        cmd: CoreCmd::Mems,
+    },
+    CommandDef {
+        name: "/kg",
+        category: "System / Config",
+        description: "Browse knowledge stores and entries",
+        cmd: CoreCmd::Knowledge,
     },
     CommandDef {
         name: "/model",
@@ -715,6 +731,7 @@ async fn main() -> Result<()> {
 
     let _ = dotenvy::dotenv();
     load_npcshrc();
+    ensure_memory_pref();
 
     resolve_team_layout();
 
@@ -844,6 +861,7 @@ async fn main() -> Result<()> {
                 &http_client,
                 &server_url,
                 true,
+                None,
             )
             .await
             {
@@ -923,6 +941,7 @@ async fn main() -> Result<()> {
     let mut session_cost: f64 = 0.0;
     let session_start = std::time::Instant::now();
     let mut input_queue: VecDeque<String> = VecDeque::new();
+    let mut memory_scheduler = MemoryScheduler::from_env();
 
     loop {
         let npc_name = kernel
@@ -1222,6 +1241,7 @@ async fn main() -> Result<()> {
                             mode.clone(),
                             &http_client,
                             &server_url,
+                            &mut memory_scheduler,
                         )
                         .await;
                         input_queue.extend(queued);
@@ -1239,6 +1259,7 @@ async fn main() -> Result<()> {
                             mode.clone(),
                             &http_client,
                             &server_url,
+                            &mut memory_scheduler,
                         )
                         .await;
                         input_queue.extend(queued);
@@ -1337,6 +1358,7 @@ async fn run_stream_turn_with_interrupt(
     server_url: &str,
     save_history: bool,
     interrupt: Option<tokio::sync::mpsc::UnboundedReceiver<()>>,
+    memory_scheduler: Option<&mut MemoryScheduler>,
 ) -> Result<String> {
     {
         let process = kernel.get_process_mut(current_pid).ok_or_else(|| {
@@ -1585,9 +1607,8 @@ async fn run_stream_turn_with_interrupt(
     let tool_results = response.tool_results;
 
     if let Some(ref usage) = response.usage {
-        let cost = calculate_cost(&request.model, usage.prompt_tokens, usage.completion_tokens);
         let process = kernel.get_process_mut(current_pid).unwrap();
-        process.record_usage(usage.prompt_tokens, usage.completion_tokens, cost);
+        process.record_usage(usage.prompt_tokens, usage.completion_tokens, usage.cost_usd);
     }
 
     let mut assistant_message = response.message.clone();
@@ -1608,7 +1629,7 @@ async fn run_stream_turn_with_interrupt(
     let cost = response
         .usage
         .as_ref()
-        .map(|u| calculate_cost(&request.model, u.prompt_tokens, u.completion_tokens))
+        .map(|u| u.cost_usd)
         .unwrap_or(0.0);
 
     {
@@ -1658,6 +1679,22 @@ async fn run_stream_turn_with_interrupt(
 
     let output = response.message.content.clone().unwrap_or_default();
 
+    if save_history {
+        if let Some(scheduler) = memory_scheduler {
+            maybe_extract_memory(
+                scheduler,
+                kernel,
+                current_pid,
+                input,
+                &output,
+                client,
+                server_url,
+                &cwd,
+            )
+            .await;
+        }
+    }
+
     let process = kernel.get_process_mut(current_pid).unwrap();
     process.state = ProcessState::Blocked;
     Ok(output)
@@ -1678,6 +1715,7 @@ async fn run_stream_turn(
     client: &reqwest::Client,
     server_url: &str,
     save_history: bool,
+    memory_scheduler: Option<&mut MemoryScheduler>,
 ) -> Result<String> {
     const MAX_ATTEMPTS: usize = 4;
     let mut last_error: Option<npcrs::NpcError> = None;
@@ -1720,6 +1758,7 @@ async fn run_stream_turn(
             server_url,
             save_history,
             None,
+            None,
         )
         .await
         {
@@ -1746,6 +1785,7 @@ async fn run_interactive_stream_turn_once(
     mode: Mode,
     client: &reqwest::Client,
     server_url: &str,
+    memory_scheduler: Option<&mut MemoryScheduler>,
 ) -> (Result<String>, Vec<String>) {
     use crossterm::event::{self, Event, KeyCode, KeyModifiers};
     use std::time::Duration;
@@ -1806,6 +1846,7 @@ async fn run_interactive_stream_turn_once(
         server_url,
         true,
         Some(interrupt_rx),
+        memory_scheduler,
     )
     .await;
 
@@ -1834,6 +1875,7 @@ async fn run_interactive_stream_turn(
     mode: Mode,
     client: &reqwest::Client,
     server_url: &str,
+    memory_scheduler: &mut Option<MemoryScheduler>,
 ) -> (Result<String>, Vec<String>) {
     const MAX_ATTEMPTS: usize = 4;
     let mut last_error: Option<npcrs::NpcError> = None;
@@ -1894,6 +1936,7 @@ async fn run_interactive_stream_turn(
             mode.clone(),
             client,
             server_url,
+            memory_scheduler.as_mut(),
         )
         .await;
         all_queued.extend(queued);
@@ -2437,6 +2480,18 @@ async fn dispatch_core_command(
             }
             CoreDispatch::Handled
         }
+        CoreCmd::Mems => {
+            if let Err(e) = tui::run_memories_tui() {
+                eprintln!("{RED}Error: {e}{RESET}");
+            }
+            CoreDispatch::Handled
+        }
+        CoreCmd::Knowledge => {
+            if let Err(e) = tui::run_knowledge_tui() {
+                eprintln!("{RED}Error: {e}{RESET}");
+            }
+            CoreDispatch::Handled
+        }
 
         CoreCmd::Jinxes => {
             if let Err(e) = tui::run_jinxes_tui(kernel) {
@@ -2678,10 +2733,31 @@ async fn run_init_command(rest: &str) {
 }
 
 async fn run_nsync_command(_rest: &str) {
-    let team_dir = find_team_dir();
-    let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+    let home = real_user_home().unwrap_or_else(|| shellexpand::tilde("~").to_string());
+    let home_path = std::path::PathBuf::from(home);
+    let user_team = home_path.join(".npcsh").join("npc_team");
+
     println!("{BOLD}Syncing npcsh state...{RESET}");
-    println!("  team dir: {team_dir}");
+
+    if let Some(base_src) = team_sync::find_bundled_team_source() {
+        match team_sync::sync_team(&base_src, &user_team) {
+            Ok(_) => println!("  synced base team from {}", base_src.display()),
+            Err(e) => eprintln!("  {RED}failed to sync base team: {e}{RESET}"),
+        }
+    } else {
+        println!("  no bundled team source found; skipped base sync");
+    }
+
+    match team_sync::setup_global_team(&home_path) {
+        Ok(merged) => {
+            println!("  merged team: {}", merged.display());
+            // Reset the cached team dir so the next find_team_dir() sees it.
+            let _ = set_resolved_team_dir(merged.to_string_lossy().to_string());
+        }
+        Err(e) => eprintln!("  {RED}failed to build merged team: {e}{RESET}"),
+    }
+
+    let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
     println!("  db path:  {db_path}");
     println!("{GREEN}State synced.{RESET}");
 }
@@ -3126,6 +3202,7 @@ async fn execute_cron_job_and_capture(
                 client,
                 server_url,
                 false,
+                None,
             )
             .await
             {
@@ -3435,6 +3512,293 @@ fn load_npcshrc() {
             }
         }
     }
+}
+
+fn ensure_memory_pref() {
+    if std::env::var("NPCSH_MEMORY").is_ok() {
+        return;
+    }
+    let rc_path = shellexpand::tilde("~/.npcshrc").to_string();
+    let mut has_entry = false;
+    if let Ok(content) = std::fs::read_to_string(&rc_path) {
+        has_entry = content
+            .lines()
+            .any(|l| l.trim_start_matches("export ").starts_with("NPCSH_MEMORY"));
+    }
+    if has_entry {
+        return;
+    }
+
+    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+        unsafe { std::env::set_var("NPCSH_MEMORY", "1") };
+        let _ = append_npcshrc_line("NPCSH_MEMORY", "1");
+        return;
+    }
+
+    eprintln!("{CYAN}Memory / knowledge extraction{RESET}");
+    eprintln!("npcsh can automatically extract memories from your conversations.");
+    eprintln!("You can change this later by editing NPCSH_MEMORY in ~/.npcshrc.");
+    eprint!("Enable automatic memory extraction? [Y/n] {RESET}");
+    let _ = std::io::Write::flush(&mut std::io::stderr());
+    let mut answer = String::new();
+    if std::io::stdin().read_line(&mut answer).is_err() {
+        answer = "y".to_string();
+    }
+    let enabled = match answer.trim().to_lowercase().as_str() {
+        "" | "y" | "yes" | "true" | "1" | "on" => true,
+        _ => false,
+    };
+    let value = if enabled { "1" } else { "0" };
+    unsafe { std::env::set_var("NPCSH_MEMORY", value) };
+    let _ = append_npcshrc_line("NPCSH_MEMORY", value);
+    eprintln!(
+        "{}Memory extraction {}",
+        if enabled { GREEN } else { YELLOW },
+        if enabled { "enabled" } else { "disabled" }
+    );
+}
+
+fn append_npcshrc_line(key: &str, value: &str) -> std::io::Result<()> {
+    let rc_path = shellexpand::tilde("~/.npcshrc").to_string();
+    let path = std::path::Path::new(&rc_path);
+    let mut content = String::new();
+    if path.exists() {
+        content = std::fs::read_to_string(path)?;
+        if !content.ends_with('\n') {
+            content.push('\n');
+        }
+    }
+    content.push_str(&format!("export {}={}\n", key, value));
+    std::fs::write(path, content)
+}
+
+struct MemoryScheduler {
+    turn_count: u64,
+    next_trigger: u64,
+    lambda: f64,
+    threshold: f64,
+    rng: rand::rngs::StdRng,
+}
+
+impl MemoryScheduler {
+    fn new(lambda: f64, threshold: f64) -> Self {
+        let mut rng = rand::rngs::StdRng::from_entropy();
+        let first = Self::sample_interval(lambda, &mut rng);
+        Self {
+            turn_count: 0,
+            next_trigger: first,
+            lambda: lambda.max(1.0),
+            threshold: threshold.clamp(0.0, 1.0),
+            rng,
+        }
+    }
+
+    fn from_env() -> Option<Self> {
+        if !memory_context_enabled() {
+            return None;
+        }
+        let lambda = std::env::var("NPCSH_MEMORY_LAMBDA")
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(5.0);
+        let threshold = std::env::var("NPCSH_MEMORY_THRESHOLD")
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(0.25);
+        Some(Self::new(lambda, threshold))
+    }
+
+    fn sample_interval(lambda: f64, rng: &mut rand::rngs::StdRng) -> u64 {
+        let u: f64 = rng.r#gen();
+        let u = u.max(1e-10);
+        let interval = (-lambda * u.ln()).ceil() as u64;
+        interval.max(1)
+    }
+
+    fn should_trigger(&mut self) -> bool {
+        self.turn_count += 1;
+        self.turn_count >= self.next_trigger
+    }
+
+    fn defer(&mut self) {
+        self.next_trigger = self.turn_count + 1;
+    }
+
+    fn reschedule(&mut self) {
+        self.next_trigger = self.turn_count + Self::sample_interval(self.lambda, &mut self.rng);
+    }
+}
+
+fn memory_trigger_score(user_input: &str, assistant_output: &str) -> f64 {
+    let user = user_input.to_lowercase();
+    let out = assistant_output.to_lowercase();
+    let mut score: f64 = 0.0;
+
+    if user_input.len() > 80 {
+        score += 0.10;
+    }
+    if user.contains('?') {
+        score += 0.15;
+    }
+    if assistant_output.len() > 200 {
+        score += 0.10;
+    }
+    let signal_words = [
+        "remember", "important", "note", "decision", "decided", "prefer", "preference",
+        "always", "never", "usually", "frustrated", "excited", "love", "hate",
+        "surprised", "disappointed", "critical", "urgent", "milestone", "goal",
+    ];
+    for word in &signal_words {
+        if user.contains(word) || out.contains(word) {
+            score += 0.20;
+            break;
+        }
+    }
+    if out.contains("```") || out.contains("---") {
+        score += 0.10;
+    }
+    score.min(1.0_f64)
+}
+
+async fn extract_memory_candidates(
+    client: &reqwest::Client,
+    server_url: &str,
+    conversation_text: &str,
+    model: &str,
+    provider: &str,
+    npc_name: &str,
+    team_name: &str,
+    current_path: &str,
+    conversation_id: &str,
+) -> Result<Vec<String>> {
+    let url = format!("{}/api/knowledge/extract", server_url);
+    let body = serde_json::json!({
+        "conversation_text": conversation_text,
+        "conversation_id": conversation_id,
+        "model": model,
+        "provider": provider,
+        "npc": npc_name,
+        "team": team_name,
+        "currentPath": current_path,
+    });
+    let response = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| npcrs::NpcError::Other(format!("memory extract request failed: {e}")))?;
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        return Err(npcrs::NpcError::Other(format!(
+            "memory extract returned {}: {}",
+            status,
+            text
+        )));
+    }
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| npcrs::NpcError::Other(format!("memory extract json failed: {e}")))?;
+    let facts = json
+        .get("facts")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut memories = Vec::new();
+    for fact in facts {
+        if let Some(statement) = fact
+            .get("statement")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+        {
+            if !statement.is_empty() {
+                memories.push(statement);
+            }
+        }
+    }
+    Ok(memories)
+}
+
+async fn maybe_extract_memory(
+    scheduler: &mut MemoryScheduler,
+    kernel: &mut Kernel,
+    current_pid: u32,
+    user_input: &str,
+    assistant_output: &str,
+    client: &reqwest::Client,
+    server_url: &str,
+    cwd: &str,
+) {
+    if !scheduler.should_trigger() {
+        return;
+    }
+
+    let score = memory_trigger_score(user_input, assistant_output);
+    if score < scheduler.threshold {
+        scheduler.defer();
+        return;
+    }
+
+    let Some(process) = kernel.get_process(current_pid) else {
+        scheduler.reschedule();
+        return;
+    };
+    let model = process.npc.resolved_model();
+    let provider = process.npc.resolved_provider();
+    let npc_name = process.npc.name.clone();
+    let conv_id = process.conversation_id.clone();
+    let team_name = kernel
+        .team
+        .source_dir
+        .as_deref()
+        .and_then(|d| std::path::Path::new(d).file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("npcsh")
+        .to_string();
+    let conversation_text = format!("User: {}\nAssistant: {}", user_input, assistant_output);
+
+    let candidates = extract_memory_candidates(
+        client,
+        server_url,
+        &conversation_text,
+        &model,
+        &provider,
+        &npc_name,
+        &team_name,
+        cwd,
+        &conv_id,
+    )
+    .await;
+
+    match candidates {
+        Ok(memories) if !memories.is_empty() => {
+            let mut inserted = 0;
+            for memory in memories {
+                let message_id = format!("{}_auto_{}", conv_id, inserted);
+                let _ = kernel.history.add_memory_to_database(
+                    &message_id,
+                    &conv_id,
+                    &npc_name,
+                    &team_name,
+                    cwd,
+                    &memory,
+                    Some(&model),
+                    Some(&provider),
+                );
+                inserted += 1;
+            }
+            if inserted > 0 {
+                eprintln!("\n\x1b[90m🧠 {} memory candidate(s) queued for review ({} score={:.2})\x1b[0m", inserted, npc_name, score);
+            }
+        }
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("\n\x1b[90mMemory extraction skipped: {}\x1b[0m", e);
+        }
+    }
+
+    scheduler.reschedule();
 }
 
 const TERMINAL_EDITORS: &[&str] = &["vim", "nvim", "nano", "vi", "emacs", "less", "more", "man"];
@@ -4124,7 +4488,7 @@ async fn exec_nsh_file(
             substituted
         };
 
-        match run_stream_turn(&mut kernel, 0, &cmd, Mode::Agent, client, server_url, true).await {
+        match run_stream_turn(&mut kernel, 0, &cmd, Mode::Agent, client, server_url, true, None).await {
             Ok(output) => {
                 last_output = output.clone();
                 if !output.is_empty() {
@@ -4524,26 +4888,45 @@ fn redraw_prompt(prompt: &str, buf: &str, pos: usize, mode: Mode) {
     let colored = colorize_input(buf);
     let hint = input_hint(buf, mode);
 
-    let prompt_lines = prompt.chars().filter(|c| *c == '\n').count() + 1;
+    let (cols, _) = tui::term_size();
+    let cols = cols.max(1);
 
-    print!("\x1b[2K\x1b[G");
-    for _ in 1..prompt_lines {
-        print!("\x1b[A\x1b[2K\x1b[G");
+    let prompt_visible = visible_len(prompt);
+    let cursor_abs = prompt_visible + visible_len(&buf[..pos]);
+    let cursor_line = cursor_abs / cols;
+    let cursor_col = cursor_abs % cols;
+
+    // Move to the first line of the prompt/input area and clear everything below.
+    print!("\x1b[G");
+    for _ in 0..cursor_line {
+        print!("\x1b[A");
     }
-    print!("\x1b[J");
+    print!("\x1b[G\x1b[J");
 
     print!("{}", prompt);
     print!("{}", colored);
 
-    let after_visible = visible_len(&buf[pos..]);
-    if after_visible > 0 {
-        print!("\x1b[{}D", after_visible);
+    // Place the cursor at the position within the (possibly wrapped) input.
+    let end_abs = prompt_visible + visible_len(buf);
+    let end_line = end_abs / cols;
+    let lines_up = end_line.saturating_sub(cursor_line);
+    if lines_up > 0 {
+        print!("\x1b[{}A", lines_up);
+    }
+    print!("\x1b[G");
+    if cursor_col > 0 {
+        print!("\x1b[{}C", cursor_col);
     }
 
     if let Some(h) = hint {
-        let target_col = visible_len(prompt) + visible_len(&buf[..pos]);
         print!("\r\n\x1b[2K\x1b[90m{}\x1b[0m", h);
-        print!("\x1b[1A\x1b[G\x1b[{}C", target_col);
+        // Return the cursor to the input position; hint is one line below end_line.
+        let lines_back = (end_line - cursor_line) + 1;
+        print!("\x1b[{}A", lines_back);
+        print!("\x1b[G");
+        if cursor_col > 0 {
+            print!("\x1b[{}C", cursor_col);
+        }
     }
 
     let _ = io::stdout().flush();
