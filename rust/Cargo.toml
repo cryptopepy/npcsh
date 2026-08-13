@@ -38,5 +38,13 @@ libc = "0.2"
 termimad = "0.34"
 rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = { version = "0.4.45", features = ["clock", "serde"] }
+rand = "0.8"
 uuid = { version = "1", features = ["v4"] }
 semver = "1"
+
+[build-dependencies]
+anyhow = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

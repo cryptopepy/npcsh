@@ -258,6 +258,7 @@ impl ClaudeStreamParser {
                 prompt_tokens: self.input,
                 completion_tokens: self.output,
                 total_tokens: total,
+                cost_usd: 0.0,
             })
         } else {
             None
@@ -325,6 +326,7 @@ impl OpencodeStreamParser {
                 prompt_tokens: self.input,
                 completion_tokens: self.output,
                 total_tokens: total,
+                cost_usd: 0.0,
             })
         } else {
             None
@@ -395,6 +397,7 @@ impl CodexStreamParser {
                 prompt_tokens: self.input,
                 completion_tokens: self.output,
                 total_tokens: total,
+                cost_usd: 0.0,
             })
         } else {
             None
@@ -518,6 +521,7 @@ fn parse_claude_output(raw: &str) -> (String, Option<Usage>, f64) {
                 prompt_tokens: input,
                 completion_tokens: output,
                 total_tokens: input + output,
+                cost_usd: cost,
             })
         } else {
             None
