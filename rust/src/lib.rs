@@ -1,5 +1,6 @@
 pub mod markdown;
 pub mod stream_client;
+pub mod team_sync;
 
 use npcrs::calculate_cost;
 use npcrs::error::Result;
@@ -12,7 +13,11 @@ const AGENTS_TEAM_DIR: &str = ".npcsh_team";
 
 static RESOLVED_TEAM_DIR: OnceLock<String> = OnceLock::new();
 
-fn real_user_home() -> Option<String> {
+pub fn set_resolved_team_dir(dir: String) -> std::result::Result<(), String> {
+    RESOLVED_TEAM_DIR.set(dir)
+}
+
+pub fn real_user_home() -> Option<String> {
     // Do not trust the HOME environment variable: benchmark runners and other
     // wrappers isolate HOME to a throwaway directory. Use the OS user database
     // on Unix to get the real home directory, and fall back to HOME only on
@@ -57,13 +62,16 @@ pub fn find_team_dir() -> String {
         // under benchmark isolation, so avoid it when possible.
         shellexpand::tilde("~").to_string()
     });
-    let global = std::path::Path::new(&home)
-        .join(".npcsh")
-        .join("npc_team")
-        .to_string_lossy()
-        .to_string();
-    if std::path::Path::new(&global).exists() {
-        return global;
+    let home_path = std::path::PathBuf::from(home);
+    match team_sync::setup_global_team(&home_path) {
+        Ok(merged) => return merged.to_string_lossy().to_string(),
+        Err(e) => {
+            eprintln!("\x1b[31mFailed to set up global team: {}\x1b[0m", e);
+            let global = home_path.join(".npcsh").join("npc_team");
+            if global.exists() {
+                return global.to_string_lossy().to_string();
+            }
+        }
     }
 
     ".".to_string()

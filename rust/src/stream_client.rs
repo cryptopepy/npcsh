@@ -247,6 +247,10 @@ fn apply_sse_event(
                         .get("total_tokens")
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0),
+                    cost_usd: json
+                        .get("cost")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0),
                 });
             }
             "message_stop" | "stop" => {}
@@ -263,7 +267,7 @@ fn apply_sse_event(
             "tool_start" => {
                 let name = json.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
                 renderer.flush();
-                eprintln!("\x1b[36m⚡ {}:\x1b[0m", name);
+                eprintln!("\x1b[90m┌─ ⚡ {}\x1b[0m", name);
                 renderer.clear();
                 *saw_output = true;
             }
@@ -289,17 +293,50 @@ fn apply_sse_event(
                 } else {
                     String::new()
                 };
-                let preview = if display.chars().count() > 500 {
-                    let truncated: String = display.chars().take(500).collect();
-                    format!("{}...\n[{} chars total]", truncated, display.chars().count())
-                } else {
-                    display.clone()
-                };
-                if !preview.is_empty() {
-                    eprintln!("\x1b[36m  {} result:\x1b[0m\n{}", name, preview);
-                } else {
-                    eprintln!("\x1b[36m  {} result: (empty)\x1b[0m", name);
+                let max_lines = std::env::var("NPCSH_TOOL_LINES")
+                    .ok()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(24);
+                let max_chars = std::env::var("NPCSH_TOOL_CHARS")
+                    .ok()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(1200);
+                let mut preview = display.clone();
+                let mut truncated = false;
+                if preview.chars().count() > max_chars {
+                    preview = preview.chars().take(max_chars).collect::<String>();
+                    truncated = true;
                 }
+                let lines: Vec<String> = preview
+                    .lines()
+                    .map(|l| {
+                        if l.chars().count() > 120 {
+                            format!("{}…", l.chars().take(119).collect::<String>())
+                        } else {
+                            l.to_string()
+                        }
+                    })
+                    .collect();
+                let visible_lines = lines.len().min(max_lines);
+                for (i, line) in lines.iter().take(visible_lines).enumerate() {
+                    let prefix = if i == 0 {
+                        format!("\x1b[90m│\x1b[0m  ")
+                    } else {
+                        "\x1b[90m│\x1b[0m  ".to_string()
+                    };
+                    eprintln!("{}{}", prefix, line);
+                }
+                if lines.len() > max_lines || truncated {
+                    let total = display.lines().count();
+                    let extra = total.saturating_sub(max_lines);
+                    let suffix = if truncated {
+                        format!(" | {}+ chars", display.chars().count() - max_chars)
+                    } else {
+                        String::new()
+                    };
+                    eprintln!("\x1b[90m│  … {} more line{}{}\x1b[0m", extra, if extra == 1 { "" } else { "s" }, suffix);
+                }
+                eprintln!("\x1b[90m└─ \x1b[36m{} result\x1b[0m", name);
                 renderer.clear();
                 *saw_output = true;
                 if !display.is_empty() {
@@ -362,7 +399,11 @@ fn apply_sse_event(
                     .get("error")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown error");
-                eprintln!("\x1b[31m  {} error: {}\x1b[0m", name, err);
+                eprintln!("\x1b[31m┌─ {} error\x1b[0m", name);
+                for line in err.lines() {
+                    eprintln!("\x1b[31m│  {}\x1b[0m", line);
+                }
+                eprintln!("\x1b[31m└─\x1b[0m");
                 renderer.clear();
                 *saw_output = true;
             }
