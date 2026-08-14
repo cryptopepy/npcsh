@@ -2456,8 +2456,27 @@ async fn dispatch_core_command(
             CoreDispatch::Handled
         }
         CoreCmd::Team => {
-            if let Err(e) = tui::run_team_tui(kernel) {
-                eprintln!("{RED}Error: {e}{RESET}");
+            match tui::run_team_tui(kernel) {
+                Ok(Some(new_team_dir)) => {
+                    let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+                    match Kernel::boot(&new_team_dir, &db_path) {
+                        Ok(new_kernel) => {
+                            *kernel = new_kernel;
+                            *current_pid = 0;
+                            if let Some(lead) = kernel.team.forenpc.as_deref() {
+                                if let Some(proc) = kernel.find_by_name(lead) {
+                                    *current_pid = proc.pid;
+                                }
+                            }
+                            println!("{GREEN}Switched to team {new_team_dir}{RESET}");
+                        }
+                        Err(e) => {
+                            eprintln!("{RED}Failed to switch team: {e}{RESET}");
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
             }
             CoreDispatch::Handled
         }
