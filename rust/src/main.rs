@@ -4,6 +4,7 @@ use npcrs::process::{Capabilities, ProcessState};
 use npcrs::{Message, calculate_cost};
 use std::collections::{HashMap, VecDeque};
 use rand::{Rng, SeedableRng};
+use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -841,7 +842,13 @@ async fn main() -> Result<()> {
     // We keep calling the model until the assistant issues a `stop` tool call,
     // returns with no tool_calls, or we hit the safety limit.
     if let Some(cmd) = cli_command {
-        const MAX_CMD_TURNS: usize = 10;
+        // Randomize the one-shot agent turn limit so tasks run for a variable
+        // duration (mean 60, stdev 30, clamped to at least 10).
+        let max_cmd_turns: usize = {
+            let mut rng = rand::thread_rng();
+            let z: f64 = rng.sample(rand_distr::StandardNormal);
+            ((60.0 + 30.0 * z) as i64).clamp(10, 300) as usize
+        };
         // In -c mode there is no interactive user to continue the loop. Tell the
         // model explicitly to call the `stop` tool as soon as it believes the task
         // is complete; otherwise the harness will keep feeding it tool results and
@@ -852,7 +859,7 @@ async fn main() -> Result<()> {
         );
         let mut turn_input = initial_input.clone();
         let mut last_output = String::new();
-        for turn in 0..MAX_CMD_TURNS {
+        for turn in 0..max_cmd_turns {
             match run_stream_turn(
                 &mut kernel,
                 current_pid,
@@ -886,7 +893,7 @@ async fn main() -> Result<()> {
                     // already in process.messages. Feed the results back with a neutral
                     // prompt so the model can decide whether to call stop or do more.
                     turn_input = "The tool results are above. Call `stop` if the task is complete, otherwise take the next step.".to_string();
-                    if turn == MAX_CMD_TURNS - 1 {
+                    if turn == max_cmd_turns - 1 {
                         eprintln!("{YELLOW}Warning: reached max agent turns for -c command; stopping.{RESET}");
                     }
                 }
@@ -2456,8 +2463,27 @@ async fn dispatch_core_command(
             CoreDispatch::Handled
         }
         CoreCmd::Team => {
-            if let Err(e) = tui::run_team_tui(kernel) {
-                eprintln!("{RED}Error: {e}{RESET}");
+            match tui::run_team_tui(kernel) {
+                Ok(Some(new_team_dir)) => {
+                    let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+                    match Kernel::boot(&new_team_dir, &db_path) {
+                        Ok(new_kernel) => {
+                            *kernel = new_kernel;
+                            *current_pid = 0;
+                            if let Some(lead) = kernel.team.forenpc.as_deref() {
+                                if let Some(proc) = kernel.find_by_name(lead) {
+                                    *current_pid = proc.pid;
+                                }
+                            }
+                            println!("{GREEN}Switched to team {new_team_dir}{RESET}");
+                        }
+                        Err(e) => {
+                            eprintln!("{RED}Failed to switch team: {e}{RESET}");
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
             }
             CoreDispatch::Handled
         }
@@ -2736,28 +2762,80 @@ async fn run_nsync_command(_rest: &str) {
     let home = real_user_home().unwrap_or_else(|| shellexpand::tilde("~").to_string());
     let home_path = std::path::PathBuf::from(home);
     let user_team = home_path.join(".npcsh").join("npc_team");
+    let tag = env!("CARGO_PKG_VERSION");
+    let repo = "NPC-Worldwide/npcsh";
+    let tarball_url = format!("https://github.com/{}/archive/refs/tags/v{}.tar.gz", repo, tag);
 
     println!("{BOLD}Syncing npcsh state...{RESET}");
 
-    if let Some(base_src) = team_sync::find_bundled_team_source() {
-        match team_sync::sync_team(&base_src, &user_team) {
-            Ok(_) => println!("  synced base team from {}", base_src.display()),
-            Err(e) => eprintln!("  {RED}failed to sync base team: {e}{RESET}"),
-        }
-    } else {
-        println!("  no bundled team source found; skipped base sync");
+    let tmp_dir = std::env::temp_dir().join(format!("npcsh-sync-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp_dir);
+    if let Err(e) = fs::create_dir_all(&tmp_dir) {
+        eprintln!("  {RED}failed to create temp dir: {e}{RESET}");
+        return;
     }
 
-    match team_sync::setup_global_team(&home_path) {
-        Ok(merged) => {
-            println!("  merged team: {}", merged.display());
-            // Reset the cached team dir so the next find_team_dir() sees it.
-            let _ = set_resolved_team_dir(merged.to_string_lossy().to_string());
+    let tarball_path = tmp_dir.join(format!("npcsh-v{}.tar.gz", tag));
+    match reqwest::get(&tarball_url).await {
+        Ok(resp) if resp.status().is_success() => {
+            match resp.bytes().await {
+                Ok(bytes) => {
+                    if let Err(e) = fs::write(&tarball_path, &bytes) {
+                        eprintln!("  {RED}failed to write tarball: {e}{RESET}");
+                        return;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("  {RED}failed to download tarball: {e}{RESET}");
+                    return;
+                }
+            }
         }
-        Err(e) => eprintln!("  {RED}failed to build merged team: {e}{RESET}"),
+        Ok(resp) => {
+            eprintln!("  {RED}failed to download tarball: {}{RESET}", resp.status());
+            return;
+        }
+        Err(e) => {
+            eprintln!("  {RED}failed to download tarball: {e}{RESET}");
+            return;
+        }
     }
+
+    let source = tmp_dir.join(format!("npcsh-{}", tag)).join("npcsh").join("npc_team");
+    let output = std::process::Command::new("tar")
+        .arg("-xzf")
+        .arg(&tarball_path)
+        .arg("-C")
+        .arg(&tmp_dir)
+        .arg(format!("npcsh-{}/npcsh/npc_team", tag))
+        .output();
+    match output {
+        Ok(out) if out.status.success() => {}
+        Ok(out) => {
+            eprintln!(
+                "  {RED}failed to extract tarball: {}{RESET}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            return;
+        }
+        Err(e) => {
+            eprintln!("  {RED}failed to run tar: {e}{RESET}");
+            return;
+        }
+    }
+
+    match team_sync::sync_team(&source, &user_team) {
+        Ok(_) => {
+            println!("  synced base team from {}", source.display());
+            let _ = set_resolved_team_dir(user_team.to_string_lossy().to_string());
+        }
+        Err(e) => eprintln!("  {RED}failed to sync base team: {e}{RESET}"),
+    }
+
+    let _ = fs::remove_dir_all(&tmp_dir);
 
     let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+    println!("  team dir: {}", user_team.display());
     println!("  db path:  {db_path}");
     println!("{GREEN}State synced.{RESET}");
 }
@@ -3576,19 +3654,17 @@ struct MemoryScheduler {
     turn_count: u64,
     next_trigger: u64,
     lambda: f64,
-    threshold: f64,
     rng: rand::rngs::StdRng,
 }
 
 impl MemoryScheduler {
-    fn new(lambda: f64, threshold: f64) -> Self {
+    fn new(lambda: f64) -> Self {
         let mut rng = rand::rngs::StdRng::from_entropy();
         let first = Self::sample_interval(lambda, &mut rng);
         Self {
             turn_count: 0,
             next_trigger: first,
             lambda: lambda.max(1.0),
-            threshold: threshold.clamp(0.0, 1.0),
             rng,
         }
     }
@@ -3601,11 +3677,7 @@ impl MemoryScheduler {
             .ok()
             .and_then(|s| s.parse::<f64>().ok())
             .unwrap_or(5.0);
-        let threshold = std::env::var("NPCSH_MEMORY_THRESHOLD")
-            .ok()
-            .and_then(|s| s.parse::<f64>().ok())
-            .unwrap_or(0.25);
-        Some(Self::new(lambda, threshold))
+            Some(Self::new(lambda))
     }
 
     fn sample_interval(lambda: f64, rng: &mut rand::rngs::StdRng) -> u64 {
@@ -3629,36 +3701,6 @@ impl MemoryScheduler {
     }
 }
 
-fn memory_trigger_score(user_input: &str, assistant_output: &str) -> f64 {
-    let user = user_input.to_lowercase();
-    let out = assistant_output.to_lowercase();
-    let mut score: f64 = 0.0;
-
-    if user_input.len() > 80 {
-        score += 0.10;
-    }
-    if user.contains('?') {
-        score += 0.15;
-    }
-    if assistant_output.len() > 200 {
-        score += 0.10;
-    }
-    let signal_words = [
-        "remember", "important", "note", "decision", "decided", "prefer", "preference",
-        "always", "never", "usually", "frustrated", "excited", "love", "hate",
-        "surprised", "disappointed", "critical", "urgent", "milestone", "goal",
-    ];
-    for word in &signal_words {
-        if user.contains(word) || out.contains(word) {
-            score += 0.20;
-            break;
-        }
-    }
-    if out.contains("```") || out.contains("---") {
-        score += 0.10;
-    }
-    score.min(1.0_f64)
-}
 
 async fn extract_memory_candidates(
     client: &reqwest::Client,
@@ -3734,12 +3776,6 @@ async fn maybe_extract_memory(
         return;
     }
 
-    let score = memory_trigger_score(user_input, assistant_output);
-    if score < scheduler.threshold {
-        scheduler.defer();
-        return;
-    }
-
     let Some(process) = kernel.get_process(current_pid) else {
         scheduler.reschedule();
         return;
@@ -3757,6 +3793,9 @@ async fn maybe_extract_memory(
         .unwrap_or("npcsh")
         .to_string();
     let conversation_text = format!("User: {}\nAssistant: {}", user_input, assistant_output);
+
+    eprint!("\n\x1b[90m🧠 thinking about memories...\x1b[0m");
+    let _ = std::io::stderr().flush();
 
     let candidates = extract_memory_candidates(
         client,
@@ -3789,12 +3828,16 @@ async fn maybe_extract_memory(
                 inserted += 1;
             }
             if inserted > 0 {
-                eprintln!("\n\x1b[90m🧠 {} memory candidate(s) queued for review ({} score={:.2})\x1b[0m", inserted, npc_name, score);
+                eprintln!("\r\x1b[90m🧠 {} memory candidate(s) queued for review\x1b[0m          ", inserted);
+            } else {
+                eprint!("\r\x1b[2K");
             }
         }
-        Ok(_) => {}
+        Ok(_) => {
+            eprint!("\r\x1b[2K");
+        }
         Err(e) => {
-            eprintln!("\n\x1b[90mMemory extraction skipped: {}\x1b[0m", e);
+            eprintln!("\r\x1b[90mMemory extraction skipped: {}\x1b[0m", e);
         }
     }
 
@@ -4714,7 +4757,11 @@ fn readline_raw(
                                                 );
                                                 let args = &tc.function.arguments;
                                                 let preview = if args.len() > 200 {
-                                                    format!("{}…", &args[..200])
+                                                    let mut boundary = 200;
+                                                    while boundary > 0 && !args.is_char_boundary(boundary) {
+                                                        boundary -= 1;
+                                                    }
+                                                    format!("{}…", &args[..boundary])
                                                 } else {
                                                     args.to_string()
                                                 };
@@ -4734,7 +4781,7 @@ fn readline_raw(
                             } else {
                                 buf.insert(pos, c);
                             }
-                            pos += 1;
+                            pos += c.len_utf8();
                             redraw_prompt(prompt, &buf, pos, mode);
                             io::stdout().flush()?;
                         }
@@ -4742,8 +4789,9 @@ fn readline_raw(
                     KeyCode::Backspace => {
                         tab_matches.clear();
                         if pos > 0 {
-                            buf.remove(pos - 1);
-                            pos -= 1;
+                            let prev = buf[..pos].chars().next_back().unwrap();
+                            pos -= prev.len_utf8();
+                            buf.remove(pos);
                             redraw_prompt(prompt, &buf, pos, mode);
                             io::stdout().flush()?;
                         }
@@ -4762,14 +4810,16 @@ fn readline_raw(
                     }
                     KeyCode::Left => {
                         if pos > 0 {
-                            pos -= 1;
+                            let prev = buf[..pos].chars().next_back().unwrap();
+                            pos -= prev.len_utf8();
                             print!("\x1b[D");
                             io::stdout().flush()?;
                         }
                     }
                     KeyCode::Right => {
                         if pos < buf.len() {
-                            pos += 1;
+                            let next = buf[pos..].chars().next().unwrap();
+                            pos += next.len_utf8();
                             print!("\x1b[C");
                             io::stdout().flush()?;
                         }
@@ -4892,11 +4942,14 @@ fn redraw_prompt(prompt: &str, buf: &str, pos: usize, mode: Mode) {
     let cols = cols.max(1);
 
     let prompt_visible = visible_len(prompt);
+    let end_abs = prompt_visible + visible_len(buf);
+    let end_line = end_abs / cols;
+
     let cursor_abs = prompt_visible + visible_len(&buf[..pos]);
     let cursor_line = cursor_abs / cols;
     let cursor_col = cursor_abs % cols;
 
-    // Move to the first line of the prompt/input area and clear everything below.
+    // Clear from the start of the prompt line downward.
     print!("\x1b[G");
     for _ in 0..cursor_line {
         print!("\x1b[A");
@@ -4906,27 +4959,20 @@ fn redraw_prompt(prompt: &str, buf: &str, pos: usize, mode: Mode) {
     print!("{}", prompt);
     print!("{}", colored);
 
-    // Place the cursor at the position within the (possibly wrapped) input.
-    let end_abs = prompt_visible + visible_len(buf);
-    let end_line = end_abs / cols;
-    let lines_up = end_line.saturating_sub(cursor_line);
+    let has_hint = hint.is_some();
+    if let Some(h) = hint {
+        print!("\r\n\x1b[2K\x1b[90m{}\x1b[0m", h);
+    }
+
+    // Place the cursor at the requested position within the input.
+    let target_line = if has_hint { end_line + 1 } else { end_line };
+    let lines_up = target_line.saturating_sub(cursor_line);
     if lines_up > 0 {
         print!("\x1b[{}A", lines_up);
     }
     print!("\x1b[G");
     if cursor_col > 0 {
         print!("\x1b[{}C", cursor_col);
-    }
-
-    if let Some(h) = hint {
-        print!("\r\n\x1b[2K\x1b[90m{}\x1b[0m", h);
-        // Return the cursor to the input position; hint is one line below end_line.
-        let lines_back = (end_line - cursor_line) + 1;
-        print!("\x1b[{}A", lines_back);
-        print!("\x1b[G");
-        if cursor_col > 0 {
-            print!("\x1b[{}C", cursor_col);
-        }
     }
 
     let _ = io::stdout().flush();

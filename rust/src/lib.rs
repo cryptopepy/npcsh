@@ -63,15 +63,12 @@ pub fn find_team_dir() -> String {
         shellexpand::tilde("~").to_string()
     });
     let home_path = std::path::PathBuf::from(home);
-    match team_sync::setup_global_team(&home_path) {
-        Ok(merged) => return merged.to_string_lossy().to_string(),
-        Err(e) => {
-            eprintln!("\x1b[31mFailed to set up global team: {}\x1b[0m", e);
-            let global = home_path.join(".npcsh").join("npc_team");
-            if global.exists() {
-                return global.to_string_lossy().to_string();
-            }
-        }
+    let team_dir = home_path.join(".npcsh").join("npc_team");
+    if let Err(e) = team_sync::ensure_user_subteam(&home_path) {
+        eprintln!("\x1b[31mFailed to set up user subteam: {}\x1b[0m", e);
+    }
+    if team_dir.exists() {
+        return team_dir.to_string_lossy().to_string();
     }
 
     ".".to_string()
