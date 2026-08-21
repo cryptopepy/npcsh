@@ -1623,7 +1623,7 @@ pub fn run_setup_tui() -> Result<()> {
     Ok(())
 }
 
-pub fn run_team_tui(kernel: &mut Kernel) -> Result<()> {
+pub fn run_team_tui(kernel: &mut Kernel) -> Result<Option<String>> {
     let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
     let mut out = io::stdout();
 
@@ -1631,13 +1631,34 @@ pub fn run_team_tui(kernel: &mut Kernel) -> Result<()> {
     let jinx_names: Vec<String> = kernel.jinx_names().into_iter().map(String::from).collect();
     let team_dir = kernel.team.source_dir.clone().unwrap_or_default();
 
+    let registered_teams: Vec<(String, String)> = {
+        let path = shellexpand::tilde("~/.npcsh/teams.yaml").to_string();
+        let mut out = Vec::new();
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(parsed) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+                if let Some(teams) = parsed.get("teams").and_then(|t| t.as_mapping()) {
+                    for (name, path_value) in teams {
+                        let name = name.as_str().unwrap_or("").to_string();
+                        let path = path_value.as_str().unwrap_or("").to_string();
+                        if !name.is_empty() && !path.is_empty() {
+                            let expanded = shellexpand::tilde(&path).to_string();
+                            out.push((name, expanded));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    };
+
     #[derive(Clone, Copy, PartialEq)]
     enum Tab {
+        Teams,
         NPCs,
         Jinxes,
         Context,
     }
-    let mut tab = Tab::NPCs;
+    let mut tab = Tab::Teams;
     let mut sel: usize = 0;
     let mut scroll: usize = 0;
 
@@ -1651,20 +1672,18 @@ pub fn run_team_tui(kernel: &mut Kernel) -> Result<()> {
             &mut out,
             3,
             &format!(
-                "  {} | [{}] NPCs  [{}] Jinxes  [{}] Context",
+                "  {} | [{}] Teams  [{}] NPCs  [{}] Jinxes  [{}] Context",
                 team_dir,
-                if matches!(tab, Tab::NPCs) { "1" } else { "_" },
-                if matches!(tab, Tab::Jinxes) { "2" } else { "_" },
-                if matches!(tab, Tab::Context) {
-                    "3"
-                } else {
-                    "_"
-                }
+                if matches!(tab, Tab::Teams) { "1" } else { "_" },
+                if matches!(tab, Tab::NPCs) { "2" } else { "_" },
+                if matches!(tab, Tab::Jinxes) { "3" } else { "_" },
+                if matches!(tab, Tab::Context) { "4" } else { "_" },
             ),
         );
         hr(&mut out, cols, 4);
 
         let items = match tab {
+            Tab::Teams => registered_teams.len(),
             Tab::NPCs => npcs.len(),
             Tab::Jinxes => jinx_names.len(),
             Tab::Context => 1,
@@ -1686,6 +1705,11 @@ pub fn run_team_tui(kernel: &mut Kernel) -> Result<()> {
                 continue;
             }
             let text = match tab {
+                Tab::Teams => {
+                    let (name, path) = &registered_teams[idx];
+                    let active = if team_dir == *path { " *" } else { "" };
+                    format!("{}{}", name, active)
+                }
                 Tab::NPCs => format!("@{}", npcs[idx]),
                 Tab::Jinxes => format!("/{}", jinx_names[idx]),
                 Tab::Context => kernel
@@ -1710,7 +1734,12 @@ pub fn run_team_tui(kernel: &mut Kernel) -> Result<()> {
         }
 
         hr(&mut out, cols, rows - 2);
-        footer_line(&mut out, cols, rows, " [Tab] Switch  [j/k] Nav  [q] Quit ");
+        let footer = if matches!(tab, Tab::Teams) {
+            " [Tab] Switch  [j/k] Nav  [Enter] Select  [q] Quit "
+        } else {
+            " [Tab] Switch  [j/k] Nav  [q] Quit "
+        };
+        footer_line(&mut out, cols, rows, footer);
         let _ = out.flush();
 
         if let Ok(Event::Key(key)) = event::read() {
@@ -1725,14 +1754,14 @@ pub fn run_team_tui(kernel: &mut Kernel) -> Result<()> {
                 }
                 KeyCode::Esc | KeyCode::Char('q') => break,
                 KeyCode::Tab => {
-                    let tabs = [Tab::NPCs, Tab::Jinxes, Tab::Context];
+                    let tabs = [Tab::Teams, Tab::NPCs, Tab::Jinxes, Tab::Context];
                     let idx = tabs.iter().position(|t| t == &tab).unwrap_or(0);
                     tab = tabs[(idx + 1) % tabs.len()];
                     sel = 0;
                     scroll = 0;
                 }
                 KeyCode::BackTab => {
-                    let tabs = [Tab::NPCs, Tab::Jinxes, Tab::Context];
+                    let tabs = [Tab::Teams, Tab::NPCs, Tab::Jinxes, Tab::Context];
                     let idx = tabs.iter().position(|t| t == &tab).unwrap_or(0);
                     tab = tabs[(idx + tabs.len() - 1) % tabs.len()];
                     sel = 0;
@@ -1748,11 +1777,17 @@ pub fn run_team_tui(kernel: &mut Kernel) -> Result<()> {
                         sel -= 1;
                     }
                 }
+                KeyCode::Enter => {
+                    if matches!(tab, Tab::Teams) && sel < registered_teams.len() {
+                        let selected_dir = registered_teams[sel].1.clone();
+                        return Ok(Some(selected_dir));
+                    }
+                }
                 _ => {}
             }
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
