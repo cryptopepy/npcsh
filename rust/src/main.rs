@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 mod cli_providers;
 mod cron;
+mod interrupt;
 mod tui;
 mod tutorial;
 mod version_check;
@@ -1794,9 +1795,6 @@ async fn run_interactive_stream_turn_once(
     server_url: &str,
     memory_scheduler: Option<&mut MemoryScheduler>,
 ) -> (Result<String>, Vec<String>) {
-    use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-    use std::time::Duration;
-
     let _raw_guard = {
         let _ = crossterm::terminal::enable_raw_mode();
         RawModeRestore
@@ -1806,43 +1804,8 @@ async fn run_interactive_stream_turn_once(
     let (queue_tx, mut queue_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     let running = Arc::new(AtomicBool::new(true));
-    let listener_running = running.clone();
 
-    let listener = tokio::task::spawn_blocking(move || {
-        let mut buf = String::new();
-        while listener_running.load(Ordering::Relaxed) {
-            if event::poll(Duration::from_millis(100)).unwrap_or(false) {
-                if let Ok(Event::Key(key)) = event::read() {
-                    if key.kind == crossterm::event::KeyEventKind::Release {
-                        continue;
-                    }
-                    match key.code {
-                        KeyCode::Esc => {
-                            let _ = interrupt_tx.send(());
-                        }
-                        KeyCode::Char('c')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            let _ = interrupt_tx.send(());
-                        }
-                        KeyCode::Enter => {
-                            let line = std::mem::take(&mut buf);
-                            if !line.is_empty() {
-                                let _ = queue_tx.send(line);
-                            }
-                        }
-                        KeyCode::Char(c) => {
-                            buf.push(c);
-                        }
-                        KeyCode::Backspace => {
-                            buf.pop();
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-    });
+    let listener = interrupt::spawn_listener(interrupt_tx, queue_tx, running.clone());
 
     let result = run_stream_turn_with_interrupt(
         kernel,
@@ -4342,15 +4305,23 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
         if let Ok(true) = event::poll(std::time::Duration::from_millis(50)) {
             if let Ok(Event::Key(key)) = event::read() {
                 match key.code {
-                    KeyCode::Char('q') | KeyCode::Char('c')
+                    KeyCode::Char('q') | KeyCode::Char('Q')
                         if key.modifiers == crossterm::event::KeyModifiers::CONTROL =>
                     {
                         selected_conversation.replace(None);
                         break;
                     }
-                    KeyCode::Char('q') => {
+                    KeyCode::Char('q') | KeyCode::Char('Q') => {
                         selected_conversation.replace(None);
                         break;
+                    }
+                    KeyCode::Esc => {
+                        if mode.get() == 'p' {
+                            mode.set('l');
+                        } else {
+                            selected_conversation.replace(None);
+                            break;
+                        }
                     }
                     KeyCode::Char('j') | KeyCode::Down => {
                         if mode.get() == 'l' && selected.get() < convos.len() - 1 {
