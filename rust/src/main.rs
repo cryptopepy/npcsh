@@ -439,6 +439,18 @@ struct CommandDef {
 
 const CORE_COMMANDS: &[CommandDef] = &[
     CommandDef {
+        name: "/exit",
+        category: "Info",
+        description: "Exit npcsh",
+        cmd: CoreCmd::Exit,
+    },
+    CommandDef {
+        name: "exit",
+        category: "Info",
+        description: "Exit npcsh",
+        cmd: CoreCmd::Exit,
+    },
+    CommandDef {
         name: "/quit",
         category: "Info",
         description: "Exit npcsh",
