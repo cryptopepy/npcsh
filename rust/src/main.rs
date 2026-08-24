@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 mod cli_providers;
 mod cron;
+mod interrupt;
 mod tui;
 mod tutorial;
 mod version_check;
@@ -426,6 +427,7 @@ enum CoreCmd {
     Ps,
     Stats,
     Tutorial,
+    ProposeJinxes,
 }
 
 struct CommandDef {
@@ -437,7 +439,19 @@ struct CommandDef {
 
 const CORE_COMMANDS: &[CommandDef] = &[
     CommandDef {
+        name: "/exit",
+        category: "Info",
+        description: "Exit npcsh",
+        cmd: CoreCmd::Exit,
+    },
+    CommandDef {
         name: "exit",
+        category: "Info",
+        description: "Exit npcsh",
+        cmd: CoreCmd::Exit,
+    },
+    CommandDef {
+        name: "/quit",
         category: "Info",
         description: "Exit npcsh",
         cmd: CoreCmd::Exit,
@@ -449,13 +463,13 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Exit,
     },
     CommandDef {
-        name: "/exit",
+        name: "/help",
         category: "Info",
-        description: "Exit npcsh",
-        cmd: CoreCmd::Exit,
+        description: "Show this help",
+        cmd: CoreCmd::Help,
     },
     CommandDef {
-        name: "/help",
+        name: "help",
         category: "Info",
         description: "Show this help",
         cmd: CoreCmd::Help,
@@ -467,19 +481,31 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Jinxes,
     },
     CommandDef {
+        name: "jinxes",
+        category: "Info",
+        description: "List available jinxes",
+        cmd: CoreCmd::Jinxes,
+    },
+    CommandDef {
         name: "/ps",
         category: "Info",
         description: "List processes",
         cmd: CoreCmd::Ps,
     },
     CommandDef {
-        name: "/quit",
+        name: "ps",
         category: "Info",
-        description: "Exit npcsh",
-        cmd: CoreCmd::Exit,
+        description: "List processes",
+        cmd: CoreCmd::Ps,
     },
     CommandDef {
         name: "/stats",
+        category: "Info",
+        description: "Kernel stats",
+        cmd: CoreCmd::Stats,
+    },
+    CommandDef {
+        name: "stats",
         category: "Info",
         description: "Kernel stats",
         cmd: CoreCmd::Stats,
@@ -491,7 +517,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Tutorial,
     },
     CommandDef {
+        name: "tutorial",
+        category: "Info",
+        description: "Run interactive tutorial",
+        cmd: CoreCmd::Tutorial,
+    },
+    CommandDef {
         name: "/agent",
+        category: "Modes",
+        description: "Full agent mode (tools + bash + LLM)",
+        cmd: CoreCmd::Agent,
+    },
+    CommandDef {
+        name: "agent",
         category: "Modes",
         description: "Full agent mode (tools + bash + LLM)",
         cmd: CoreCmd::Agent,
@@ -503,7 +541,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Chat,
     },
     CommandDef {
+        name: "chat",
+        category: "Modes",
+        description: "Chat-only mode (LLM, no tools)",
+        cmd: CoreCmd::Chat,
+    },
+    CommandDef {
         name: "/cmd",
+        category: "Modes",
+        description: "Command mode (bash first, LLM fallback)",
+        cmd: CoreCmd::CmdMode,
+    },
+    CommandDef {
+        name: "cmd",
         category: "Modes",
         description: "Command mode (bash first, LLM fallback)",
         cmd: CoreCmd::CmdMode,
@@ -515,7 +565,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Kill,
     },
     CommandDef {
+        name: "kill",
+        category: "NPCs",
+        description: "Kill current process",
+        cmd: CoreCmd::Kill,
+    },
+    CommandDef {
         name: "/clear",
+        category: "System / Config",
+        description: "Clear conversation",
+        cmd: CoreCmd::Clear,
+    },
+    CommandDef {
+        name: "clear",
         category: "System / Config",
         description: "Clear conversation",
         cmd: CoreCmd::Clear,
@@ -527,7 +589,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Flush,
     },
     CommandDef {
+        name: "flush",
+        category: "System / Config",
+        description: "Flush the last N messages from the conversation",
+        cmd: CoreCmd::Flush,
+    },
+    CommandDef {
         name: "/config",
+        category: "System / Config",
+        description: "Configuration TUI",
+        cmd: CoreCmd::Config,
+    },
+    CommandDef {
+        name: "config",
         category: "System / Config",
         description: "Configuration TUI",
         cmd: CoreCmd::Config,
@@ -539,7 +613,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Ctx,
     },
     CommandDef {
+        name: "ctx",
+        category: "System / Config",
+        description: "Browse and edit team context fields",
+        cmd: CoreCmd::Ctx,
+    },
+    CommandDef {
         name: "/history",
+        category: "System / Config",
+        description: "Show conversation history",
+        cmd: CoreCmd::History,
+    },
+    CommandDef {
+        name: "history",
         category: "System / Config",
         description: "Show conversation history",
         cmd: CoreCmd::History,
@@ -551,7 +637,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Memories,
     },
     CommandDef {
+        name: "memories",
+        category: "System / Config",
+        description: "Browse memory lifecycle TUI",
+        cmd: CoreCmd::Memories,
+    },
+    CommandDef {
         name: "/mems",
+        category: "System / Config",
+        description: "Browse and edit memory lifecycle TUI",
+        cmd: CoreCmd::Mems,
+    },
+    CommandDef {
+        name: "mems",
         category: "System / Config",
         description: "Browse and edit memory lifecycle TUI",
         cmd: CoreCmd::Mems,
@@ -563,7 +661,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Knowledge,
     },
     CommandDef {
+        name: "kg",
+        category: "System / Config",
+        description: "Browse knowledge stores and entries",
+        cmd: CoreCmd::Knowledge,
+    },
+    CommandDef {
         name: "/model",
+        category: "System / Config",
+        description: "Model selection TUI",
+        cmd: CoreCmd::Model,
+    },
+    CommandDef {
+        name: "model",
         category: "System / Config",
         description: "Model selection TUI",
         cmd: CoreCmd::Model,
@@ -575,7 +685,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Reattach,
     },
     CommandDef {
+        name: "reattach",
+        category: "System / Config",
+        description: "Reattach to files/sessions",
+        cmd: CoreCmd::Reattach,
+    },
+    CommandDef {
         name: "/set",
+        category: "System / Config",
+        description: "Set model, provider, or mode",
+        cmd: CoreCmd::Set,
+    },
+    CommandDef {
+        name: "set",
         category: "System / Config",
         description: "Set model, provider, or mode",
         cmd: CoreCmd::Set,
@@ -587,7 +709,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Setup,
     },
     CommandDef {
+        name: "setup",
+        category: "System / Config",
+        description: "First-time setup TUI",
+        cmd: CoreCmd::Setup,
+    },
+    CommandDef {
         name: "/team",
+        category: "System / Config",
+        description: "Team management TUI",
+        cmd: CoreCmd::Team,
+    },
+    CommandDef {
+        name: "team",
         category: "System / Config",
         description: "Team management TUI",
         cmd: CoreCmd::Team,
@@ -599,7 +733,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Commit,
     },
     CommandDef {
+        name: "commit",
+        category: "Tools",
+        description: "Commit helper TUI",
+        cmd: CoreCmd::Commit,
+    },
+    CommandDef {
         name: "/gitt",
+        category: "Tools",
+        description: "Git TUI",
+        cmd: CoreCmd::Gitt,
+    },
+    CommandDef {
+        name: "gitt",
         category: "Tools",
         description: "Git TUI",
         cmd: CoreCmd::Gitt,
@@ -611,7 +757,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Cron,
     },
     CommandDef {
+        name: "cron",
+        category: "Loops",
+        description: "Cron management",
+        cmd: CoreCmd::Cron,
+    },
+    CommandDef {
         name: "/loop",
+        category: "Loops",
+        description: "Create a loop",
+        cmd: CoreCmd::Loop,
+    },
+    CommandDef {
+        name: "loop",
         category: "Loops",
         description: "Create a loop",
         cmd: CoreCmd::Loop,
@@ -623,7 +781,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::LoopDemo,
     },
     CommandDef {
+        name: "loop_demo",
+        category: "Loops",
+        description: "Add a demo heartbeat loop",
+        cmd: CoreCmd::LoopDemo,
+    },
+    CommandDef {
         name: "/loopoff",
+        category: "Loops",
+        description: "Disable a loop",
+        cmd: CoreCmd::LoopOff,
+    },
+    CommandDef {
+        name: "loopoff",
         category: "Loops",
         description: "Disable a loop",
         cmd: CoreCmd::LoopOff,
@@ -635,7 +805,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::LoopOn,
     },
     CommandDef {
+        name: "loopon",
+        category: "Loops",
+        description: "Enable a loop",
+        cmd: CoreCmd::LoopOn,
+    },
+    CommandDef {
         name: "/looprm",
+        category: "Loops",
+        description: "Remove a loop",
+        cmd: CoreCmd::LoopRm,
+    },
+    CommandDef {
+        name: "looprm",
         category: "Loops",
         description: "Remove a loop",
         cmd: CoreCmd::LoopRm,
@@ -647,7 +829,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Loops,
     },
     CommandDef {
+        name: "loops",
+        category: "Loops",
+        description: "List loops",
+        cmd: CoreCmd::Loops,
+    },
+    CommandDef {
         name: "/doctor",
+        category: "System Commands",
+        description: "Diagnose and auto-fix common issues",
+        cmd: CoreCmd::Doctor,
+    },
+    CommandDef {
+        name: "doctor",
         category: "System Commands",
         description: "Diagnose and auto-fix common issues",
         cmd: CoreCmd::Doctor,
@@ -659,7 +853,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Init,
     },
     CommandDef {
+        name: "init",
+        category: "System Commands",
+        description: "Initialize / reinitialize npcsh",
+        cmd: CoreCmd::Init,
+    },
+    CommandDef {
         name: "/nsync",
+        category: "System Commands",
+        description: "Sync npcsh state",
+        cmd: CoreCmd::Nsync,
+    },
+    CommandDef {
+        name: "nsync",
         category: "System Commands",
         description: "Sync npcsh state",
         cmd: CoreCmd::Nsync,
@@ -671,7 +877,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Reload,
     },
     CommandDef {
+        name: "refresh",
+        category: "System Commands",
+        description: "Refresh npcsh (alias of reload)",
+        cmd: CoreCmd::Reload,
+    },
+    CommandDef {
         name: "/reload",
+        category: "System Commands",
+        description: "Reload npcsh state",
+        cmd: CoreCmd::Reload,
+    },
+    CommandDef {
+        name: "reload",
         category: "System Commands",
         description: "Reload npcsh state",
         cmd: CoreCmd::Reload,
@@ -683,7 +901,19 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Shh,
     },
     CommandDef {
+        name: "shh",
+        category: "System Commands",
+        description: "Toggle quiet mode",
+        cmd: CoreCmd::Shh,
+    },
+    CommandDef {
         name: "/update",
+        category: "System Commands",
+        description: "Update npcsh",
+        cmd: CoreCmd::Update,
+    },
+    CommandDef {
+        name: "update",
         category: "System Commands",
         description: "Update npcsh",
         cmd: CoreCmd::Update,
@@ -695,10 +925,34 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Usage,
     },
     CommandDef {
+        name: "usage",
+        category: "System Commands",
+        description: "Show usage info",
+        cmd: CoreCmd::Usage,
+    },
+    CommandDef {
         name: "/verbose",
         category: "System Commands",
         description: "Toggle verbose mode",
         cmd: CoreCmd::Verbose,
+    },
+    CommandDef {
+        name: "verbose",
+        category: "System Commands",
+        description: "Toggle verbose mode",
+        cmd: CoreCmd::Verbose,
+    },
+    CommandDef {
+        name: "/propose-jinxes",
+        category: "Tools",
+        description: "Suggest new jinxes/skills or edits based on team context",
+        cmd: CoreCmd::ProposeJinxes,
+    },
+    CommandDef {
+        name: "propose-jinxes",
+        category: "Tools",
+        description: "Suggest new jinxes/skills or edits based on team context",
+        cmd: CoreCmd::ProposeJinxes,
     },
 ];
 
@@ -1100,13 +1354,13 @@ async fn main() -> Result<()> {
             }
         }
 
-        if input == "/set" {
-            eprintln!("Usage: /set key=value");
-            eprintln!("  model=gpt-4o  provider=openai  mode=chat");
+        if input == "/set" || input == "set" {
+            eprintln!("Usage: set key=value");
+            eprintln!("  model=<model-name>  provider=<provider-name>  mode=chat");
             continue;
         }
-        if input.starts_with("/set ") {
-            let rest = input.strip_prefix("/set ").unwrap().trim();
+        if input.starts_with("/set ") || input.starts_with("set ") {
+            let rest = input.strip_prefix("/set ").or(input.strip_prefix("set ")).unwrap().trim();
             handle_set_command(rest, &mut kernel, current_pid, &mut mode);
             continue;
         }
@@ -1166,6 +1420,15 @@ async fn main() -> Result<()> {
             let cmd_name = parts[0];
             eprintln!("{RED}Unknown command: /{cmd_name}{RESET}");
             continue;
+        }
+        if !input.is_empty() {
+            let first = input.split_whitespace().next().unwrap_or("");
+            if CORE_COMMANDS.iter().any(|c| c.name == first) {
+                // Core commands are dispatched above; reaching here means the
+                // command matched CORE_COMMANDS but was not handled. Continue
+                // so the user doesn't fall through to bash/LLM with a typo.
+                continue;
+            }
         }
 
         if input.starts_with("cd ") || input == "cd" {
@@ -1794,9 +2057,6 @@ async fn run_interactive_stream_turn_once(
     server_url: &str,
     memory_scheduler: Option<&mut MemoryScheduler>,
 ) -> (Result<String>, Vec<String>) {
-    use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-    use std::time::Duration;
-
     let _raw_guard = {
         let _ = crossterm::terminal::enable_raw_mode();
         RawModeRestore
@@ -1806,43 +2066,8 @@ async fn run_interactive_stream_turn_once(
     let (queue_tx, mut queue_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     let running = Arc::new(AtomicBool::new(true));
-    let listener_running = running.clone();
 
-    let listener = tokio::task::spawn_blocking(move || {
-        let mut buf = String::new();
-        while listener_running.load(Ordering::Relaxed) {
-            if event::poll(Duration::from_millis(100)).unwrap_or(false) {
-                if let Ok(Event::Key(key)) = event::read() {
-                    if key.kind == crossterm::event::KeyEventKind::Release {
-                        continue;
-                    }
-                    match key.code {
-                        KeyCode::Esc => {
-                            let _ = interrupt_tx.send(());
-                        }
-                        KeyCode::Char('c')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            let _ = interrupt_tx.send(());
-                        }
-                        KeyCode::Enter => {
-                            let line = std::mem::take(&mut buf);
-                            if !line.is_empty() {
-                                let _ = queue_tx.send(line);
-                            }
-                        }
-                        KeyCode::Char(c) => {
-                            buf.push(c);
-                        }
-                        KeyCode::Backspace => {
-                            buf.pop();
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-    });
+    let listener = interrupt::spawn_listener(interrupt_tx, queue_tx, running.clone());
 
     let result = run_stream_turn_with_interrupt(
         kernel,
@@ -2272,8 +2497,8 @@ fn ask_permission(prompt: &str) -> String {
 fn handle_set_command(rest: &str, kernel: &mut Kernel, pid: u32, mode: &mut Mode) {
     let parts: Vec<&str> = rest.splitn(2, '=').collect();
     if parts.len() != 2 {
-        eprintln!("Usage: /set key=value");
-        eprintln!("  model=gpt-4o  provider=openai  mode=chat");
+        eprintln!("Usage: set key=value");
+        eprintln!("  model=<model-name>  provider=<provider-name>  mode=chat");
         return;
     }
     let key = parts[0].trim();
@@ -2500,6 +2725,96 @@ async fn dispatch_core_command(
             }
             CoreDispatch::Handled
         }
+
+        CoreCmd::ProposeJinxes => {
+            let Some(process) = kernel.get_process(*current_pid) else {
+                eprintln!("{RED}No active NPC.{RESET}");
+                return CoreDispatch::Handled;
+            };
+            let npc_name = process.npc.name.clone();
+
+            // Gather existing jinxes
+            let mut jinx_list = Vec::new();
+            for (name, jinx) in &kernel.jinxes {
+                let desc = if jinx.description.is_empty() {
+                    "(no description)"
+                } else {
+                    jinx.description.as_str()
+                };
+                jinx_list.push(format!("- {name}: {desc}"));
+            }
+            jinx_list.sort();
+
+            // Gather recent conversation turns
+            let mut recent = String::new();
+            if let Some(p) = kernel.get_process(*current_pid) {
+                let mut count = 0;
+                for m in p.messages.iter().rev() {
+                    if count >= 10 {
+                        break;
+                    }
+                    if m.role == "user" || m.role == "assistant" {
+                        let content = m.content.as_deref().unwrap_or("").trim();
+                        if !content.is_empty() {
+                            recent.push_str(&format!("{}: {}\n", m.role, content.chars().take(500).collect::<String>()));
+                            count += 1;
+                        }
+                    }
+                }
+            }
+
+            // Team context
+            let team_ctx = kernel.team.context.as_deref().unwrap_or("(none)");
+
+            let prompt = format!(
+                "You are helping improve an NPC team's tooling.\n\n\
+                Team context:\n{team_ctx}\n\n\
+                Existing jinxes/skills:\n{}\n\n\
+                Recent conversation:\n{recent}\n\n\
+                Based on the team context and recent work, propose 1-3 new jinxes/skills or concrete edits to existing ones. \
+                For each proposal give: name, purpose, inputs, and a short draft of the jinx steps. \
+                Write in plain text suitable for turning into a .jinx file later.",
+                jinx_list.join("\n")
+            );
+
+            eprintln!("{DIM}Asking @{npc_name} for jinx proposals...{RESET}");
+            match kernel.exec_chat(*current_pid, &prompt).await {
+                Ok(output) => {
+                    // Decide destination: local team dir if it has a jinxes folder, else global
+                    let base_dir = kernel
+                        .team
+                        .source_dir
+                        .as_deref()
+                        .and_then(|d| {
+                            let p = std::path::Path::new(d).join("jinxes");
+                            if p.is_dir() { Some(p) } else { None }
+                        })
+                        .unwrap_or_else(|| {
+                            shellexpand::tilde("~/.npcsh/npc_team/usr/jinxes").into_owned().into()
+                        });
+                    let _ = std::fs::create_dir_all(&base_dir);
+                    let stamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let out_path = base_dir.join(format!("proposed-{stamp}.md"));
+                    match std::fs::write(&out_path, &output) {
+                        Ok(_) => {
+                            eprintln!("{GREEN}Wrote proposals to {}{RESET}", out_path.display());
+                        }
+                        Err(e) => {
+                            eprintln!("{RED}Failed to write proposals: {e}{RESET}");
+                            println!("{output}");
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{RED}Proposal request failed: {e}{RESET}");
+                }
+            }
+            CoreDispatch::Handled
+        }
+
         CoreCmd::Memories => {
             if let Err(e) = tui::run_memories_tui() {
                 eprintln!("{RED}Error: {e}{RESET}");
@@ -3405,10 +3720,14 @@ fn current_npc_name(kernel: &Kernel, current_pid: u32) -> String {
 }
 
 fn current_npc_jinxes(kernel: &Kernel, current_pid: u32) -> std::collections::HashSet<String> {
-    kernel
+    let mut names: std::collections::HashSet<String> = kernel
         .get_process(current_pid)
         .map(|p| p.npc.jinx_names.iter().cloned().collect())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // Team-level jinxes (including foreign refs loaded from team.ctx) are
+    // inherited by every NPC on the team.
+    names.extend(kernel.team.jinxes.keys().cloned());
+    names
 }
 
 fn print_welcome(kernel: &Kernel, current_pid: u32) {
@@ -3660,11 +3979,13 @@ struct MemoryScheduler {
 impl MemoryScheduler {
     fn new(lambda: f64) -> Self {
         let mut rng = rand::rngs::StdRng::from_entropy();
+        // lambda is the mean interval (in turns) between memory extractions.
+        let lambda = lambda.max(1.0);
         let first = Self::sample_interval(lambda, &mut rng);
         Self {
             turn_count: 0,
             next_trigger: first,
-            lambda: lambda.max(1.0),
+            lambda,
             rng,
         }
     }
@@ -3673,11 +3994,12 @@ impl MemoryScheduler {
         if !memory_context_enabled() {
             return None;
         }
+        // Default to a mean interval of ~60 turns between memory extractions.
         let lambda = std::env::var("NPCSH_MEMORY_LAMBDA")
             .ok()
             .and_then(|s| s.parse::<f64>().ok())
-            .unwrap_or(5.0);
-            Some(Self::new(lambda))
+            .unwrap_or(60.0);
+        Some(Self::new(lambda))
     }
 
     fn sample_interval(lambda: f64, rng: &mut rand::rngs::StdRng) -> u64 {
@@ -4114,32 +4436,13 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
     > = std::cell::RefCell::new(Vec::new());
     let selected_conversation: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
 
-    fn short_model(model: &str) -> &str {
-        if model.contains("gpt-4") {
-            return "gpt4";
-        }
-        if model.contains("gpt-3") {
-            return "gpt3";
-        }
-        if model.contains("claude-3-5-sonnet") {
-            return "sonnet";
-        }
-        if model.contains("claude-3-5-haiku") {
-            return "haiku";
-        }
-        if model.contains("claude-3-opus") {
-            return "opus";
-        }
-        if model.contains("claude") {
-            return "claude";
-        }
-        if model.contains("gemini") {
-            return "gemini";
-        }
+    fn short_model(model: &str) -> String {
         if model.is_empty() {
-            return "-";
+            return "-".to_string();
         }
-        &model[..model.len().min(8)]
+        // Return the first whitespace-delimited token, truncated to 8 chars.
+        let token = model.split_whitespace().next().unwrap_or(model);
+        token[..token.len().min(8)].to_string()
     }
 
     let target = filter
@@ -4342,15 +4645,23 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
         if let Ok(true) = event::poll(std::time::Duration::from_millis(50)) {
             if let Ok(Event::Key(key)) = event::read() {
                 match key.code {
-                    KeyCode::Char('q') | KeyCode::Char('c')
+                    KeyCode::Char('q') | KeyCode::Char('Q')
                         if key.modifiers == crossterm::event::KeyModifiers::CONTROL =>
                     {
                         selected_conversation.replace(None);
                         break;
                     }
-                    KeyCode::Char('q') => {
+                    KeyCode::Char('q') | KeyCode::Char('Q') => {
                         selected_conversation.replace(None);
                         break;
+                    }
+                    KeyCode::Esc => {
+                        if mode.get() == 'p' {
+                            mode.set('l');
+                        } else {
+                            selected_conversation.replace(None);
+                            break;
+                        }
                     }
                     KeyCode::Char('j') | KeyCode::Down => {
                         if mode.get() == 'l' && selected.get() < convos.len() - 1 {
@@ -4571,6 +4882,8 @@ fn classify_input(buf: &str) -> TokenClass {
         } else {
             TokenClass::UnknownSlash
         }
+    } else if CORE_COMMANDS.iter().any(|c| c.name == first) {
+        TokenClass::CoreCommand
     } else if first.starts_with('@') {
         TokenClass::NpcRef
     } else if looks_like_bash(buf) {
