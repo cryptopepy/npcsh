@@ -1,6 +1,6 @@
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// macOS interrupt listener.
@@ -25,9 +25,7 @@ pub fn spawn_listener(
                         KeyCode::Esc => {
                             let _ = interrupt_tx.send(());
                         }
-                        KeyCode::Char('c')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             let _ = interrupt_tx.send(());
                         }
                         KeyCode::Enter => {

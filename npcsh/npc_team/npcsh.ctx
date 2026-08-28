@@ -99,8 +99,6 @@ mcp_servers: []
 # the NPCSH_API_URL environment variable is used as a fallback.
 # ──────────────────────────────────────────────────────────────────────────
 
-use_global_jinxes: true
-
 available_executables:
   read:
     - cat

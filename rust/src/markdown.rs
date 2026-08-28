@@ -78,9 +78,7 @@ impl StreamRenderer {
         self.emitted_len = 0;
     }
 
-    fn emit_new(&mut self,
-        ends_with_newline: bool,
-    ) {
+    fn emit_new(&mut self, ends_with_newline: bool) {
         if self.buffer.len() <= self.emitted_len {
             return;
         }

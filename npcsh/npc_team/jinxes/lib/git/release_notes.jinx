@@ -362,7 +362,6 @@ steps:
               @@ -428,5 +474,9 @@ primary_directive: You oversee the sales pipeline, track progress, and optimize
                            'databases':'', 
               -            'use_global_jinxs': True,
-              +            'use_global_jinxes': True,
                            'forenpc': 'forenpc'
                        }
               +        if model:
@@ -488,7 +487,6 @@ steps:
               @@ -1291,3 +1352,3 @@ class NPC:
                        db_conn=None,
               -        use_global_jinxs=False,
-              +        use_global_jinxes=False,
                        memory = False,
               @@ -1301,3 +1362,3 @@ class NPC:
                            primary_directive: System prompt/directive for the NPC
@@ -504,7 +502,6 @@ steps:
                            
               -            if use_global_jinxs:
               -                self.jinxs_directory = os.path.expanduser('~/.npcsh/npc_team/jinxs/')
-              +            if use_global_jinxes:
               +                self.jinxes_directory = os.path.expanduser('~/.npcsh/npc_team/jinxes/')
                            else: 
               -                self.jinxs_directory = None
@@ -519,7 +516,6 @@ steps:
               @@ -1346,3 +1407,3 @@ class NPC:
                        self.plain_system_message = plain_system_message
               -        self.use_global_jinxs = use_global_jinxs
-              +        self.use_global_jinxes = use_global_jinxes
                        self.jinx_tool_catalog: Dict[str, Dict[str, Any]] = {}
               @@ -1355,4 +1416,4 @@ class NPC:
                            dirs.append(self.npc_directory)
@@ -732,7 +728,6 @@ steps:
               -            "jinxs": self.jinxs_spec,
               -            "use_global_jinxs": self.use_global_jinxs
               +            "jinxes": self.jinxes_spec,
-              +            "use_global_jinxes": self.use_global_jinxes
                        }
               @@ -2381,8 +2448,8 @@ Requirements:
                        str_rep = f"NPC: {self.name}\nDirective: {self.primary_directive}\nModel: {self.model}\nProvider: {self.provider}\nAPI URL: {self.api_url}\n"
@@ -1606,7 +1601,6 @@ steps:
               @@ -3110,3 +3303,3 @@ provider: {npc_data['provider']}
                api_url: {npc_data.get('api_url', '')}
               -use_global_jinxs: {str(npc_data.get('use_global_jinxs', True)).lower()}
-              +use_global_jinxes: {str(npc_data.get('use_global_jinxes', True)).lower()}
                """
               @@ -3124,5 +3317,5 @@ use_global_jinxs: {str(npc_data.get('use_global_jinxs', True)).lower()}
                
@@ -1670,14 +1664,12 @@ steps:
                                    "api_url": raw_data.get("api_url", ""),
               -                    "use_global_jinxs": raw_data.get("use_global_jinxs", True),
               -                    "jinxs": raw_data.get("jinxs", "*"),
-              +                    "use_global_jinxes": raw_data.get("use_global_jinxes", True),
               +                    "jinxes": raw_data.get("jinxes", "*"),
                                })
               @@ -3504,4 +3699,4 @@ def get_npc_team_project():
                                "api_url": raw_npc_data.get("api_url", ""),
               -                "use_global_jinxs": raw_npc_data.get("use_global_jinxs", True),
               -                "jinxs": raw_npc_data.get("jinxs", "*"),
-              +                "use_global_jinxes": raw_npc_data.get("use_global_jinxes", True),
               +                "jinxes": raw_npc_data.get("jinxes", "*"),
                            }
               @@ -3510,3 +3705,87 @@ def get_npc_team_project():

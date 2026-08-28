@@ -247,10 +247,7 @@ fn apply_sse_event(
                         .get("total_tokens")
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0),
-                    cost_usd: json
-                        .get("cost")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.0),
+                    cost_usd: json.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0),
                 });
             }
             "message_stop" | "stop" => {}
@@ -274,7 +271,11 @@ fn apply_sse_event(
             "tool_result" => {
                 renderer.flush();
                 let name = json.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
-                let tool_id = json.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let tool_id = json
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let result_text = json
                     .get("result")
                     .map(|v| {
@@ -334,7 +335,12 @@ fn apply_sse_event(
                     } else {
                         String::new()
                     };
-                    eprintln!("\x1b[90m│  … {} more line{}{}\x1b[0m", extra, if extra == 1 { "" } else { "s" }, suffix);
+                    eprintln!(
+                        "\x1b[90m│  … {} more line{}{}\x1b[0m",
+                        extra,
+                        if extra == 1 { "" } else { "s" },
+                        suffix
+                    );
                 }
                 eprintln!("\x1b[90m└─ \x1b[36m{} result\x1b[0m", name);
                 renderer.clear();
@@ -344,7 +350,11 @@ fn apply_sse_event(
                         role: "tool".to_string(),
                         content: Some(display),
                         tool_calls: None,
-                        tool_call_id: if tool_id.is_empty() { None } else { Some(tool_id) },
+                        tool_call_id: if tool_id.is_empty() {
+                            None
+                        } else {
+                            Some(tool_id)
+                        },
                         name: Some(name.to_string()),
                         thinking: None,
                         reasoning_content: None,
