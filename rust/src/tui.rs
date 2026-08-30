@@ -1677,7 +1677,11 @@ pub fn run_team_tui(kernel: &mut Kernel) -> Result<Option<String>> {
                 if matches!(tab, Tab::Teams) { "1" } else { "_" },
                 if matches!(tab, Tab::NPCs) { "2" } else { "_" },
                 if matches!(tab, Tab::Jinxes) { "3" } else { "_" },
-                if matches!(tab, Tab::Context) { "4" } else { "_" },
+                if matches!(tab, Tab::Context) {
+                    "4"
+                } else {
+                    "_"
+                },
             ),
         );
         hr(&mut out, cols, 4);
@@ -1921,13 +1925,7 @@ fn generate_commit_message(model: &str, diff: &str) -> Option<String> {
     Some(text)
 }
 
-fn store_commit_training(
-    repo: &Path,
-    diff: &str,
-    generated: &str,
-    final_msg: &str,
-    model: &str,
-) {
+fn store_commit_training(repo: &Path, diff: &str, generated: &str, final_msg: &str, model: &str) {
     let branch = run_git(repo, &["branch", "--show-current"])
         .ok()
         .map(git_str)
@@ -2111,13 +2109,7 @@ pub fn run_commit_tui() -> Result<()> {
 
                             if !diff.is_empty() || !generated_msg.is_empty() {
                                 let model = pick_commit_msg_model().unwrap_or_default();
-                                store_commit_training(
-                                    &repo,
-                                    &diff,
-                                    &generated_msg,
-                                    &msg,
-                                    &model,
-                                );
+                                store_commit_training(&repo, &diff, &generated_msg, &msg, &model);
                             }
 
                             let _ = run_git(&repo, &["commit", "-m", &msg]);
@@ -3302,23 +3294,33 @@ pub fn run_memories_tui() -> Result<()> {
                             update_status(&conn, mem.id, new_status, Some(&edited));
                             msg = format!("EDITED #{} -> {}", mem.id, new_status);
                             msg_color = "36";
-                            memories = load_memories(&conn, tabs.get(tab).and_then(|t| t.as_deref()));
+                            memories =
+                                load_memories(&conn, tabs.get(tab).and_then(|t| t.as_deref()));
                             clamp_selection(&mut sel, &mut scroll, memories.len(), body_h);
                         }
                     }
                 }
                 KeyCode::Char('d') => {
                     if let Some(mem) = memories.get(sel) {
-                        msg = format!("Press d again to DELETE #{} or any other key to cancel", mem.id);
+                        msg = format!(
+                            "Press d again to DELETE #{} or any other key to cancel",
+                            mem.id
+                        );
                         msg_color = "31";
                         let _ = out.flush();
                         if let Ok(Event::Key(confirm)) = event::read() {
                             if confirm.kind != KeyEventKind::Release {
                                 if let KeyCode::Char('d') = confirm.code {
-                                    let _ = conn.execute("DELETE FROM memory_lifecycle WHERE id = ?1", params![mem.id]);
+                                    let _ = conn.execute(
+                                        "DELETE FROM memory_lifecycle WHERE id = ?1",
+                                        params![mem.id],
+                                    );
                                     msg = format!("DELETED #{}", mem.id);
                                     msg_color = "31";
-                                    memories = load_memories(&conn, tabs.get(tab).and_then(|t| t.as_deref()));
+                                    memories = load_memories(
+                                        &conn,
+                                        tabs.get(tab).and_then(|t| t.as_deref()),
+                                    );
                                     clamp_selection(&mut sel, &mut scroll, memories.len(), body_h);
                                 } else {
                                     msg = "Delete cancelled".to_string();
@@ -3337,7 +3339,7 @@ pub fn run_memories_tui() -> Result<()> {
 
 pub fn run_knowledge_tui() -> Result<()> {
     use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-    use npcsh::{discover_knowledge_stores, KnowledgeStoreInfo};
+    use npcsh::{KnowledgeStoreInfo, discover_knowledge_stores};
 
     #[derive(Clone, Debug)]
     enum Entry {
@@ -3370,7 +3372,12 @@ pub fn run_knowledge_tui() -> Result<()> {
                     let preview: String = text.replace('\n', " ").chars().take(55).collect();
                     format!("{} {} {}", icon, status, preview)
                 }
-                Entry::Item { section, idx, label, .. } => {
+                Entry::Item {
+                    section,
+                    idx,
+                    label,
+                    ..
+                } => {
                     format!("\x1b[90m[{}:{}]\x1b[0m {}", section, idx, label)
                 }
             }
@@ -3415,8 +3422,15 @@ pub fn run_knowledge_tui() -> Result<()> {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let original = mem.get("initial_memory").and_then(|v| v.as_str()).map(|s| s.to_string());
-                entries.push(Entry::Memory { status, text, original });
+                let original = mem
+                    .get("initial_memory")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                entries.push(Entry::Memory {
+                    status,
+                    text,
+                    original,
+                });
             }
         }
         for section in ["knowledge", "concepts", "links"] {
@@ -3450,10 +3464,7 @@ pub fn run_knowledge_tui() -> Result<()> {
             Ok(v) => v,
             Err(_) => return false,
         };
-        if let Some(memories) = value
-            .get_mut("memories")
-            .and_then(|v| v.as_sequence_mut())
-        {
+        if let Some(memories) = value.get_mut("memories").and_then(|v| v.as_sequence_mut()) {
             if let Some(mem) = memories.get_mut(entry_idx) {
                 if let Some(map) = mem.as_mapping_mut() {
                     let status = map
@@ -3493,10 +3504,7 @@ pub fn run_knowledge_tui() -> Result<()> {
             Ok(v) => v,
             Err(_) => return false,
         };
-        if let Some(memories) = value
-            .get_mut("memories")
-            .and_then(|v| v.as_sequence_mut())
-        {
+        if let Some(memories) = value.get_mut("memories").and_then(|v| v.as_sequence_mut()) {
             if entry_idx < memories.len() {
                 memories.remove(entry_idx);
             }
@@ -3509,7 +3517,11 @@ pub fn run_knowledge_tui() -> Result<()> {
 
     let mut stores = discover_knowledge_stores("");
     if stores.is_empty() {
-        wline(&mut out, 1, "\x1b[90mNo .knowledge.yaml stores found.\x1b[0m");
+        wline(
+            &mut out,
+            1,
+            "\x1b[90mNo .knowledge.yaml stores found.\x1b[0m",
+        );
         let _ = out.flush();
         std::thread::sleep(std::time::Duration::from_millis(800));
         return Ok(());
@@ -3614,7 +3626,11 @@ pub fn run_knowledge_tui() -> Result<()> {
                 .to_string();
             let line = format!(
                 " {} ({}m/{}k/{}c/{}l)",
-                name, store.memory_count, store.knowledge_count, store.concept_count, store.link_count
+                name,
+                store.memory_count,
+                store.knowledge_count,
+                store.concept_count,
+                store.link_count
             );
             let padded = if idx == store_sel {
                 format!("\x1b[7m {} \x1b[0m", line.pad(left_w))
@@ -3662,13 +3678,7 @@ pub fn run_knowledge_tui() -> Result<()> {
                 } else {
                     format!(" {}", line.chars().take(right_w).collect::<String>())
                 };
-                let _ = write!(
-                    out,
-                    "\x1b[{};{}H\x1b[K{}",
-                    row,
-                    left_w + 3,
-                    padded
-                );
+                let _ = write!(out, "\x1b[{};{}H\x1b[K{}", row, left_w + 3, padded);
             }
             if entries.is_empty() {
                 let _ = write!(

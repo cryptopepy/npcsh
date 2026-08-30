@@ -76,9 +76,7 @@ pub fn find_team_dir() -> String {
 
 /// Return the npcsh home directory, preferring the real OS user home over $HOME.
 pub fn npcsh_home() -> std::path::PathBuf {
-    let home = real_user_home().unwrap_or_else(|| {
-        shellexpand::tilde("~").to_string()
-    });
+    let home = real_user_home().unwrap_or_else(|| shellexpand::tilde("~").to_string());
     std::path::Path::new(&home).join(".npcsh")
 }
 
@@ -139,7 +137,6 @@ pub fn read_kg_registry() -> Vec<String> {
     out
 }
 
-
 /// Recursively scan `root` for directories containing `.knowledge.yaml`.
 pub fn scan_for_knowledge_yamls(root: &str) -> Vec<String> {
     let root = expand_tilde(root);
@@ -148,8 +145,16 @@ pub fn scan_for_knowledge_yamls(root: &str) -> Vec<String> {
     }
     let mut found = Vec::new();
     let skip: std::collections::HashSet<&str> = [
-        ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
-        "target", ".tox", ".pytest_cache",
+        ".git",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "dist",
+        "build",
+        "target",
+        ".tox",
+        ".pytest_cache",
     ]
     .iter()
     .copied()
@@ -170,7 +175,10 @@ pub fn scan_for_knowledge_yamls(root: &str) -> Vec<String> {
             if meta.is_dir() && !skip.contains(name_str.as_ref()) && !name_str.starts_with('.') {
                 stack.push(entry.path());
             } else if meta.is_file() && name_str == ".knowledge.yaml" {
-                let store_dir = entry.path().parent().map(|p| p.to_string_lossy().to_string());
+                let store_dir = entry
+                    .path()
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string());
                 if let Some(d) = store_dir {
                     if !found.contains(&d) {
                         found.push(d);
@@ -429,7 +437,7 @@ pub fn resolve_team_layout() -> Option<String> {
 
 pub async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
     use npcrs::npc_compiler::{
-        execute_jinx_with_npc, load_jinx_from_file, load_team_from_directory, Jinx,
+        Jinx, execute_jinx_with_npc, load_jinx_from_file, load_team_from_directory,
     };
 
     let jinx = load_jinx_from_file(jinx_file)?;
@@ -458,7 +466,8 @@ pub async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
         None
     };
 
-    let result = execute_jinx_with_npc(&jinx, &input_values, &available_jinxes, npc.as_ref()).await?;
+    let result =
+        execute_jinx_with_npc(&jinx, &input_values, &available_jinxes, npc.as_ref()).await?;
 
     if !result.output.is_empty() {
         println!("{}", result.output);

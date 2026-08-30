@@ -2,8 +2,8 @@ use npcrs::error::Result;
 use npcrs::kernel::Kernel;
 use npcrs::process::{Capabilities, ProcessState};
 use npcrs::{Message, calculate_cost};
-use std::collections::{HashMap, VecDeque};
 use rand::{Rng, SeedableRng};
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,9 +20,9 @@ use crate::cli_providers::{CLI_PROVIDERS, run_cli_provider};
 use crate::cron::CronRegistry;
 use npcsh::markdown::render_block;
 use npcsh::{
-    discover_knowledge_stores, exec_jinx_file, exec_npc_file, find_team_dir,
-    format_memory_context, init_team, memory_context_enabled, real_user_home, resolve_team_layout,
-    set_resolved_team_dir, stream_client, team_sync,
+    discover_knowledge_stores, exec_jinx_file, exec_npc_file, find_team_dir, format_memory_context,
+    init_team, memory_context_enabled, real_user_home, resolve_team_layout, set_resolved_team_dir,
+    stream_client, team_sync,
 };
 
 fn cli_sessions() -> &'static Mutex<HashMap<u32, String>> {
@@ -30,7 +30,10 @@ fn cli_sessions() -> &'static Mutex<HashMap<u32, String>> {
     LOCK.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-async fn ensure_server_running(client: &reqwest::Client, server_url: &str) -> std::result::Result<(), String> {
+async fn ensure_server_running(
+    client: &reqwest::Client,
+    server_url: &str,
+) -> std::result::Result<(), String> {
     if client
         .get(server_url)
         .timeout(std::time::Duration::from_secs(2))
@@ -41,8 +44,7 @@ async fn ensure_server_running(client: &reqwest::Client, server_url: &str) -> st
         return Ok(());
     }
 
-    let python = std::env::var("NPCSH_BACKEND_PYTHON")
-        .unwrap_or_else(|_| "python3".to_string());
+    let python = std::env::var("NPCSH_BACKEND_PYTHON").unwrap_or_else(|_| "python3".to_string());
 
     let teams_yaml = std::env::var("NPCSH_TEAM_YAML")
         .unwrap_or_else(|_| shellexpand::tilde("~/.npcsh/teams.yaml").to_string());
@@ -83,7 +85,10 @@ async fn ensure_server_running(client: &reqwest::Client, server_url: &str) -> st
     Err("npcpy server did not become reachable after spawn".to_string())
 }
 
-async fn restart_server(client: &reqwest::Client, server_url: &str) -> std::result::Result<(), String> {
+async fn restart_server(
+    client: &reqwest::Client,
+    server_url: &str,
+) -> std::result::Result<(), String> {
     let host = std::env::var("NPCSH_SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port = std::env::var("NPCSH_SERVER_PORT").unwrap_or_else(|_| "5237".to_string());
 
@@ -1134,9 +1139,9 @@ async fn main() -> Result<()> {
                         .and_then(|m| m.tool_calls.as_ref())
                         .cloned()
                         .unwrap_or_default();
-                    let terminal = tool_calls.iter().any(|tc| {
-                        tc.r#type == "function" && tc.function.name == "stop"
-                    });
+                    let terminal = tool_calls
+                        .iter()
+                        .any(|tc| tc.r#type == "function" && tc.function.name == "stop");
                     if tool_calls.is_empty() || terminal {
                         if !last_output.is_empty() {
                             println!("{}", last_output);
@@ -1148,7 +1153,9 @@ async fn main() -> Result<()> {
                     // prompt so the model can decide whether to call stop or do more.
                     turn_input = "The tool results are above. Call `stop` if the task is complete, otherwise take the next step.".to_string();
                     if turn == max_cmd_turns - 1 {
-                        eprintln!("{YELLOW}Warning: reached max agent turns for -c command; stopping.{RESET}");
+                        eprintln!(
+                            "{YELLOW}Warning: reached max agent turns for -c command; stopping.{RESET}"
+                        );
                     }
                 }
                 Err(e) => {
@@ -1304,12 +1311,13 @@ async fn main() -> Result<()> {
                 }
                 Ok(ReadlineResult::Cancel) => continue,
                 Ok(ReadlineResult::Reattach) => {
-                    let _ = run_reattach(&mut kernel,
+                    let _ = run_reattach(
+                        &mut kernel,
                         current_pid,
                         std::env::current_dir()
                             .ok()
                             .as_ref()
-                            .map(|p| p.to_str().unwrap_or("."))
+                            .map(|p| p.to_str().unwrap_or(".")),
                     );
                     continue;
                 }
@@ -1360,7 +1368,11 @@ async fn main() -> Result<()> {
             continue;
         }
         if input.starts_with("/set ") || input.starts_with("set ") {
-            let rest = input.strip_prefix("/set ").or(input.strip_prefix("set ")).unwrap().trim();
+            let rest = input
+                .strip_prefix("/set ")
+                .or(input.strip_prefix("set "))
+                .unwrap()
+                .trim();
             handle_set_command(rest, &mut kernel, current_pid, &mut mode);
             continue;
         }
@@ -1896,11 +1908,7 @@ async fn run_stream_turn_with_interrupt(
         .as_ref()
         .map(|u| u.completion_tokens)
         .unwrap_or(0);
-    let cost = response
-        .usage
-        .as_ref()
-        .map(|u| u.cost_usd)
-        .unwrap_or(0.0);
+    let cost = response.usage.as_ref().map(|u| u.cost_usd).unwrap_or(0.0);
 
     {
         let process = kernel.get_process_mut(current_pid).unwrap();
@@ -1994,10 +2002,13 @@ async fn run_stream_turn(
         if attempt > 0 {
             eprintln!(
                 "{YELLOW}npcpy server error; restarting server and retrying turn (attempt {}/{})...{RESET}",
-                attempt, MAX_ATTEMPTS - 1
+                attempt,
+                MAX_ATTEMPTS - 1
             );
             if let Err(e) = restart_server(client, server_url).await {
-                last_error = Some(npcrs::NpcError::Other(format!("failed to restart server: {e}")));
+                last_error = Some(npcrs::NpcError::Other(format!(
+                    "failed to restart server: {e}"
+                )));
                 continue;
             }
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -2118,14 +2129,15 @@ async fn run_interactive_stream_turn(
             if attempt == 1 {
                 eprintln!(
                     "{RED}npcpy server error: {}{RESET}",
-                    last_error.as_ref().map(|e| e.to_string()).unwrap_or_default()
+                    last_error
+                        .as_ref()
+                        .map(|e| e.to_string())
+                        .unwrap_or_default()
                 );
                 eprintln!("{YELLOW}Restart the server and retry? [Y/n]{RESET}");
                 let mut line = String::new();
                 let _ = std::io::stdin().read_line(&mut line);
-                if line.trim().eq_ignore_ascii_case("n")
-                    || line.trim().eq_ignore_ascii_case("no")
-                {
+                if line.trim().eq_ignore_ascii_case("n") || line.trim().eq_ignore_ascii_case("no") {
                     return (
                         Err(last_error.unwrap_or_else(|| {
                             npcrs::NpcError::Other("stream turn aborted".to_string())
@@ -2137,10 +2149,13 @@ async fn run_interactive_stream_turn(
 
             eprintln!(
                 "{YELLOW}Restarting npcpy server (interactive attempt {}/{})...{RESET}",
-                attempt, MAX_ATTEMPTS - 1
+                attempt,
+                MAX_ATTEMPTS - 1
             );
             if let Err(e) = restart_server(client, server_url).await {
-                last_error = Some(npcrs::NpcError::Other(format!("failed to restart server: {e}")));
+                last_error = Some(npcrs::NpcError::Other(format!(
+                    "failed to restart server: {e}"
+                )));
                 continue;
             }
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -2224,17 +2239,14 @@ async fn save_conversation_message(
         .as_ref()
         .map(|tcs| serde_json::to_string(tcs).unwrap_or_default())
         .filter(|s| !s.is_empty());
-    let tool_results_json = msg
-        .name
-        .as_ref()
-        .map(|name| {
-            serde_json::json!({
-                "name": name,
-                "tool_call_id": msg.tool_call_id.as_deref().unwrap_or(""),
-                "content": content,
-            })
-            .to_string()
-        });
+    let tool_results_json = msg.name.as_ref().map(|name| {
+        serde_json::json!({
+            "name": name,
+            "tool_call_id": msg.tool_call_id.as_deref().unwrap_or(""),
+            "content": content,
+        })
+        .to_string()
+    });
 
     let _ = kernel.history.save_conversation_message(
         &conv_id,
@@ -2324,7 +2336,12 @@ async fn save_conversation_turn(
         Some(cost),
     );
 
-    for msg in process.messages.iter().rev().take_while(|m| m.role == "tool") {
+    for msg in process
+        .messages
+        .iter()
+        .rev()
+        .take_while(|m| m.role == "tool")
+    {
         let tool_content = msg.content.as_deref().unwrap_or("");
         if tool_content.is_empty() {
             continue;
@@ -2756,7 +2773,11 @@ async fn dispatch_core_command(
                     if m.role == "user" || m.role == "assistant" {
                         let content = m.content.as_deref().unwrap_or("").trim();
                         if !content.is_empty() {
-                            recent.push_str(&format!("{}: {}\n", m.role, content.chars().take(500).collect::<String>()));
+                            recent.push_str(&format!(
+                                "{}: {}\n",
+                                m.role,
+                                content.chars().take(500).collect::<String>()
+                            ));
                             count += 1;
                         }
                     }
@@ -2790,7 +2811,9 @@ async fn dispatch_core_command(
                             if p.is_dir() { Some(p) } else { None }
                         })
                         .unwrap_or_else(|| {
-                            shellexpand::tilde("~/.npcsh/npc_team/usr/jinxes").into_owned().into()
+                            shellexpand::tilde("~/.npcsh/npc_team/usr/jinxes")
+                                .into_owned()
+                                .into()
                         });
                     let _ = std::fs::create_dir_all(&base_dir);
                     let stamp = std::time::SystemTime::now()
@@ -3079,7 +3102,10 @@ async fn run_nsync_command(_rest: &str) {
     let user_team = home_path.join(".npcsh").join("npc_team");
     let tag = env!("CARGO_PKG_VERSION");
     let repo = "NPC-Worldwide/npcsh";
-    let tarball_url = format!("https://github.com/{}/archive/refs/tags/v{}.tar.gz", repo, tag);
+    let tarball_url = format!(
+        "https://github.com/{}/archive/refs/tags/v{}.tar.gz",
+        repo, tag
+    );
 
     println!("{BOLD}Syncing npcsh state...{RESET}");
 
@@ -3092,22 +3118,23 @@ async fn run_nsync_command(_rest: &str) {
 
     let tarball_path = tmp_dir.join(format!("npcsh-v{}.tar.gz", tag));
     match reqwest::get(&tarball_url).await {
-        Ok(resp) if resp.status().is_success() => {
-            match resp.bytes().await {
-                Ok(bytes) => {
-                    if let Err(e) = fs::write(&tarball_path, &bytes) {
-                        eprintln!("  {RED}failed to write tarball: {e}{RESET}");
-                        return;
-                    }
-                }
-                Err(e) => {
-                    eprintln!("  {RED}failed to download tarball: {e}{RESET}");
+        Ok(resp) if resp.status().is_success() => match resp.bytes().await {
+            Ok(bytes) => {
+                if let Err(e) = fs::write(&tarball_path, &bytes) {
+                    eprintln!("  {RED}failed to write tarball: {e}{RESET}");
                     return;
                 }
             }
-        }
+            Err(e) => {
+                eprintln!("  {RED}failed to download tarball: {e}{RESET}");
+                return;
+            }
+        },
         Ok(resp) => {
-            eprintln!("  {RED}failed to download tarball: {}{RESET}", resp.status());
+            eprintln!(
+                "  {RED}failed to download tarball: {}{RESET}",
+                resp.status()
+            );
             return;
         }
         Err(e) => {
@@ -3116,7 +3143,10 @@ async fn run_nsync_command(_rest: &str) {
         }
     }
 
-    let source = tmp_dir.join(format!("npcsh-{}", tag)).join("npcsh").join("npc_team");
+    let source = tmp_dir
+        .join(format!("npcsh-{}", tag))
+        .join("npcsh")
+        .join("npc_team");
     let output = std::process::Command::new("tar")
         .arg("-xzf")
         .arg(&tarball_path)
@@ -3220,7 +3250,12 @@ fn run_usage_command(kernel: &Kernel, current_pid: u32) {
     };
 
     println!("{BOLD}Session Usage{RESET}");
-    println!("  Tokens: {} in / {} out ({} total)", fmt(inp), fmt(out), fmt(total));
+    println!(
+        "  Tokens: {} in / {} out ({} total)",
+        fmt(inp),
+        fmt(out),
+        fmt(total)
+    );
     println!("  Cost:   {cost_str}");
     println!("  Turns:  {turns}");
 }
@@ -3239,7 +3274,10 @@ async fn run_update_command() {
         }
     };
 
-    println!("{YELLOW}Update available: {current} → {}{RESET}", info.latest);
+    println!(
+        "{YELLOW}Update available: {current} → {}{RESET}",
+        info.latest
+    );
 
     let exe = match std::env::current_exe() {
         Ok(p) => p,
@@ -3250,7 +3288,10 @@ async fn run_update_command() {
     };
     let exe_str = exe.display().to_string();
 
-    if exe_str.starts_with("/opt/homebrew") || exe_str.starts_with("/usr/local") || exe_str.starts_with("/home/linuxbrew") {
+    if exe_str.starts_with("/opt/homebrew")
+        || exe_str.starts_with("/usr/local")
+        || exe_str.starts_with("/home/linuxbrew")
+    {
         println!("Installed via Homebrew. Run:");
         println!("  {CYAN}brew upgrade npcsh{RESET}");
         return;
@@ -3262,11 +3303,15 @@ async fn run_update_command() {
         return;
     }
 
-    let install_dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| {
-        std::path::PathBuf::from(shellexpand::tilde("~/.npcsh/bin").as_ref())
-    });
+    let install_dir = exe
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from(shellexpand::tilde("~/.npcsh/bin").as_ref()));
 
-    println!("Downloading latest release into {}{RESET}", install_dir.display());
+    println!(
+        "Downloading latest release into {}{RESET}",
+        install_dir.display()
+    );
     println!("Run: {CYAN}curl -fsSL https://enpisi.com/install-npcsh.sh | sh{RESET}");
     println!("Or restart npcsh after running the install script.");
 }
@@ -3720,14 +3765,10 @@ fn current_npc_name(kernel: &Kernel, current_pid: u32) -> String {
 }
 
 fn current_npc_jinxes(kernel: &Kernel, current_pid: u32) -> std::collections::HashSet<String> {
-    let mut names: std::collections::HashSet<String> = kernel
+    kernel
         .get_process(current_pid)
         .map(|p| p.npc.jinx_names.iter().cloned().collect())
-        .unwrap_or_default();
-    // Team-level jinxes (including foreign refs loaded from team.ctx) are
-    // inherited by every NPC on the team.
-    names.extend(kernel.team.jinxes.keys().cloned());
-    names
+        .unwrap_or_default()
 }
 
 fn print_welcome(kernel: &Kernel, current_pid: u32) {
@@ -4023,7 +4064,6 @@ impl MemoryScheduler {
     }
 }
 
-
 async fn extract_memory_candidates(
     client: &reqwest::Client,
     server_url: &str,
@@ -4056,8 +4096,7 @@ async fn extract_memory_candidates(
         let text = response.text().await.unwrap_or_default();
         return Err(npcrs::NpcError::Other(format!(
             "memory extract returned {}: {}",
-            status,
-            text
+            status, text
         )));
     }
     let json: serde_json::Value = response
@@ -4150,7 +4189,10 @@ async fn maybe_extract_memory(
                 inserted += 1;
             }
             if inserted > 0 {
-                eprintln!("\r\x1b[90m🧠 {} memory candidate(s) queued for review\x1b[0m          ", inserted);
+                eprintln!(
+                    "\r\x1b[90m🧠 {} memory candidate(s) queued for review\x1b[0m          ",
+                    inserted
+                );
             } else {
                 eprint!("\r\x1b[2K");
             }
@@ -4784,7 +4826,6 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
     Ok(())
 }
 
-
 async fn exec_nsh_file(
     script_path: &str,
     client: &reqwest::Client,
@@ -4842,7 +4883,18 @@ async fn exec_nsh_file(
             substituted
         };
 
-        match run_stream_turn(&mut kernel, 0, &cmd, Mode::Agent, client, server_url, true, None).await {
+        match run_stream_turn(
+            &mut kernel,
+            0,
+            &cmd,
+            Mode::Agent,
+            client,
+            server_url,
+            true,
+            None,
+        )
+        .await
+        {
             Ok(output) => {
                 last_output = output.clone();
                 if !output.is_empty() {
@@ -4913,17 +4965,9 @@ fn colorize_input(buf: &str) -> String {
     if first.is_empty() {
         return buf.to_string();
     }
-    let start = buf
-        .find(|c: char| !c.is_whitespace())
-        .unwrap_or(0);
+    let start = buf.find(|c: char| !c.is_whitespace()).unwrap_or(0);
     let end = start + first.len();
-    format!(
-        "{}{}{}[0m{}",
-        &buf[..start],
-        color,
-        first,
-        &buf[end..]
-    )
+    format!("{}{}{}[0m{}", &buf[..start], color, first, &buf[end..])
 }
 
 fn input_hint(buf: &str, mode: Mode) -> Option<String> {
@@ -5071,7 +5115,9 @@ fn readline_raw(
                                                 let args = &tc.function.arguments;
                                                 let preview = if args.len() > 200 {
                                                     let mut boundary = 200;
-                                                    while boundary > 0 && !args.is_char_boundary(boundary) {
+                                                    while boundary > 0
+                                                        && !args.is_char_boundary(boundary)
+                                                    {
                                                         boundary -= 1;
                                                     }
                                                     format!("{}…", &args[..boundary])
